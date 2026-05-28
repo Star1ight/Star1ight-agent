@@ -13,6 +13,12 @@ import (
 	N "github.com/sagernet/sing/common/network"
 )
 
+const (
+	defaultBurstWindow = 200 * time.Millisecond
+	maxWriteChunk      = 64 * 1024
+	maxReadChunk       = 64 * 1024
+)
+
 // RateLimiter is a small token-bucket limiter shared by all connections for a
 // node or a user. It is intentionally byte-oriented and dependency-free so the
 // no-user-limit build can compile it out with build tags.
@@ -36,7 +42,10 @@ func (l *RateLimiter) SetRate(bytesPerSecond int64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.rate = bytesPerSecond
-	l.burst = bytesPerSecond
+	l.burst = bytesPerSecond * int64(defaultBurstWindow) / int64(time.Second)
+	if l.burst < maxWriteChunk {
+		l.burst = maxWriteChunk
+	}
 	if bytesPerSecond <= 0 {
 		l.disabled = true
 		l.tokens = 0
@@ -44,8 +53,8 @@ func (l *RateLimiter) SetRate(bytesPerSecond int64) {
 	}
 	l.closed = false
 	l.disabled = false
-	if l.tokens <= 0 || l.tokens > float64(l.burst) {
-		l.tokens = float64(l.burst)
+	if l.tokens < 0 || l.tokens > float64(l.burst) {
+		l.tokens = 0
 	}
 	l.last = time.Now()
 }
@@ -84,15 +93,26 @@ func (l *RateLimiter) Wait(n int) error {
 	}
 	remaining := n
 	for remaining > 0 {
-		wait, err := l.reserve(remaining)
+		chunk := remaining
+		l.mu.Lock()
+		burst := l.burst
+		disabled := l.disabled || l.rate <= 0 || l.closed
+		l.mu.Unlock()
+		if disabled {
+			_, err := l.reserve(0)
+			return err
+		}
+		if burst > 0 && int64(chunk) > burst {
+			chunk = int(burst)
+		}
+		wait, err := l.reserve(chunk)
 		if err != nil {
 			return err
 		}
-		if wait <= 0 {
-			return nil
+		if wait > 0 {
+			time.Sleep(wait)
 		}
-		time.Sleep(wait)
-		remaining = 0
+		remaining -= chunk
 	}
 	return nil
 }
@@ -129,7 +149,7 @@ func (l *RateLimiter) reserve(n int) (time.Duration, error) {
 		return 0, nil
 	}
 	missing := need - l.tokens
-	l.tokens = 0
+	l.tokens -= need
 	return time.Duration(missing / float64(l.rate) * float64(time.Second)), nil
 }
 
@@ -147,7 +167,11 @@ func NewRateLimitedConn(conn net.Conn, readLimiter, writeLimiter *RateLimiter) n
 }
 
 func (c *RateLimitedConn) Read(b []byte) (int, error) {
-	n, err := c.ExtendedConn.Read(b)
+	readBuf := b
+	if c.readLimiter != nil && len(readBuf) > maxReadChunk {
+		readBuf = readBuf[:maxReadChunk]
+	}
+	n, err := c.ExtendedConn.Read(readBuf)
 	if n > 0 && c.readLimiter != nil {
 		if waitErr := c.readLimiter.Wait(n); waitErr != nil && err == nil {
 			err = waitErr
@@ -157,13 +181,29 @@ func (c *RateLimitedConn) Read(b []byte) (int, error) {
 }
 
 func (c *RateLimitedConn) Write(b []byte) (int, error) {
-	n, err := c.ExtendedConn.Write(b)
-	if n > 0 && c.writeLimiter != nil {
-		if waitErr := c.writeLimiter.Wait(n); waitErr != nil && err == nil {
-			err = waitErr
+	if len(b) == 0 || c.writeLimiter == nil {
+		return c.ExtendedConn.Write(b)
+	}
+	total := 0
+	for total < len(b) {
+		end := total + maxWriteChunk
+		if end > len(b) {
+			end = len(b)
+		}
+		chunk := b[total:end]
+		if err := c.writeLimiter.Wait(len(chunk)); err != nil {
+			return total, err
+		}
+		n, err := c.ExtendedConn.Write(chunk)
+		total += n
+		if err != nil {
+			return total, err
+		}
+		if n != len(chunk) {
+			return total, io.ErrShortWrite
 		}
 	}
-	return n, err
+	return total, nil
 }
 
 func (c *RateLimitedConn) ReadBuffer(buffer *buf.Buffer) error {
@@ -175,12 +215,25 @@ func (c *RateLimitedConn) ReadBuffer(buffer *buf.Buffer) error {
 }
 
 func (c *RateLimitedConn) WriteBuffer(buffer *buf.Buffer) error {
-	n := buffer.Len()
-	err := c.ExtendedConn.WriteBuffer(buffer)
-	if err == nil && n > 0 && c.writeLimiter != nil {
-		err = c.writeLimiter.Wait(n)
+	if buffer.Len() == 0 || c.writeLimiter == nil {
+		return c.ExtendedConn.WriteBuffer(buffer)
 	}
-	return err
+	for buffer.Len() > maxWriteChunk {
+		if err := c.writeLimiter.Wait(maxWriteChunk); err != nil {
+			return err
+		}
+		if _, err := c.ExtendedConn.Write(buffer.To(maxWriteChunk)); err != nil {
+			return err
+		}
+		buffer.Advance(maxWriteChunk)
+	}
+	if buffer.Len() > 0 {
+		if err := c.writeLimiter.Wait(buffer.Len()); err != nil {
+			return err
+		}
+		return c.ExtendedConn.WriteBuffer(buffer)
+	}
+	return nil
 }
 
 func (c *RateLimitedConn) Upstream() any { return c.ExtendedConn }
@@ -207,12 +260,12 @@ func (p *RateLimitedPacketConn) ReadPacket(buff *buf.Buffer) (M.Socksaddr, error
 }
 
 func (p *RateLimitedPacketConn) WritePacket(buff *buf.Buffer, dest M.Socksaddr) error {
-	n := buff.Len()
-	err := p.PacketConn.WritePacket(buff, dest)
-	if err == nil && n > 0 && p.writeLimiter != nil {
-		err = p.writeLimiter.Wait(n)
+	if buff.Len() > 0 && p.writeLimiter != nil {
+		if err := p.writeLimiter.Wait(buff.Len()); err != nil {
+			return err
+		}
 	}
-	return err
+	return p.PacketConn.WritePacket(buff, dest)
 }
 
 func (p *RateLimitedPacketConn) Upstream() any { return p.PacketConn }
