@@ -68,8 +68,24 @@ func mbpsToBytes(mbps int) int64 {
 	return int64(mbps) * 1000 * 1000 / 8
 }
 
+// sameUser reports whether all panel user fields are unchanged.
 func sameUser(a, b panelapi.User) bool {
 	return a.ID == b.ID && a.UUID == b.UUID && a.Password == b.Password && a.Name == b.Name && a.SpeedLimit == b.SpeedLimit
+}
+
+// sameCredentials reports whether a and b have the same inbound credentials.
+// SpeedLimit is intentionally excluded: speed-limit-only changes must update
+// the limiter without re-adding the same VLESS/HY2 user to sing-box.
+func sameCredentials(a, b panelapi.User) bool {
+	return a.ID == b.ID && a.UUID == b.UUID && a.Password == b.Password && a.Name == b.Name
+}
+
+type userDiff struct {
+	addVless  []option.VLESSUser
+	delVless  []string
+	addHy2    []option.Hysteria2User
+	addHy2IDs []int
+	delHy2    []string
 }
 
 func vlessUserFromPanelUser(u panelapi.User) option.VLESSUser {
@@ -94,74 +110,29 @@ func (m *UserManager) ApplyBox(inbounds map[string]adapter.Inbound, users []pane
 		}
 	}
 
-	var addVless []option.VLESSUser
-	var delVless []string
-	var addHy2 []option.Hysteria2User
-	var addHy2IDs []int
-	var delHy2 []string
-
-	for id, old := range m.users {
-		nu, ok := next[id]
-		if !ok {
-			if old.UUID != "" {
-				delVless = append(delVless, old.UUID)
-			}
-			if old.Password != "" {
-				delHy2 = append(delHy2, old.Password)
-			}
-			m.closeLimiterLocked(id)
-			continue
-		}
-		if old.UUID != nu.UUID || old.Password != nu.Password || old.Name != nu.Name {
-			if old.UUID != "" {
-				delVless = append(delVless, old.UUID)
-			}
-			if old.Password != "" {
-				delHy2 = append(delHy2, old.Password)
-			}
-		}
-	}
-	for id, nu := range next {
-		old, ok := m.users[id]
-		if ok && sameUser(old, nu) {
-			m.updateLimiterLocked(nu)
-			continue
-		}
-		if nu.UUID != "" {
-			addVless = append(addVless, vlessUserFromPanelUser(nu))
-		}
-		if nu.Password != "" {
-			name := nu.Name
-			if name == "" {
-				name = nu.Password
-			}
-			addHy2 = append(addHy2, option.Hysteria2User{Name: name, Password: nu.Password})
-			addHy2IDs = append(addHy2IDs, nu.ID)
-		}
-		m.updateLimiterLocked(nu)
-	}
+	diff := m.diffUsersLocked(next)
 
 	for tag, raw := range inbounds {
 		switch in := raw.(type) {
 		case *vless.Inbound:
-			if len(delVless) > 0 {
-				if err := in.DelUsers(delVless); err != nil {
+			if len(diff.delVless) > 0 {
+				if err := in.DelUsers(diff.delVless); err != nil {
 					return fmt.Errorf("delete vless users from %s: %w", tag, err)
 				}
 			}
-			if len(addVless) > 0 {
-				if err := in.AddUsers(addVless); err != nil {
+			if len(diff.addVless) > 0 {
+				if err := in.AddUsers(diff.addVless); err != nil {
 					return fmt.Errorf("add vless users to %s: %w", tag, err)
 				}
 			}
 		case *hysteria2.Inbound:
-			if len(delHy2) > 0 {
-				if err := in.DelUsers(delHy2); err != nil {
+			if len(diff.delHy2) > 0 {
+				if err := in.DelUsers(diff.delHy2); err != nil {
 					return fmt.Errorf("delete hysteria2 users from %s: %w", tag, err)
 				}
 			}
-			if len(addHy2) > 0 {
-				if err := in.AddUsers(addHy2, addHy2IDs); err != nil {
+			if len(diff.addHy2) > 0 {
+				if err := in.AddUsers(diff.addHy2, diff.addHy2IDs); err != nil {
 					return fmt.Errorf("add hysteria2 users to %s: %w", tag, err)
 				}
 			}
@@ -171,6 +142,71 @@ func (m *UserManager) ApplyBox(inbounds map[string]adapter.Inbound, users []pane
 	m.users = next
 	m.bySecret = nextSecrets
 	return nil
+}
+
+// diffUsersLocked computes inbound add/delete operations and updates limiter
+// objects. It must be called with m.mu held.
+func (m *UserManager) diffUsersLocked(next map[int]panelapi.User) userDiff {
+	var diff userDiff
+
+	for id, old := range m.users {
+		nu, ok := next[id]
+		if !ok {
+			if old.UUID != "" {
+				diff.delVless = append(diff.delVless, old.UUID)
+			}
+			if old.Password != "" {
+				diff.delHy2 = append(diff.delHy2, old.Password)
+			}
+			m.closeLimiterLocked(id)
+			continue
+		}
+		if !sameCredentials(old, nu) {
+			if old.UUID != "" {
+				diff.delVless = append(diff.delVless, old.UUID)
+			}
+			if old.Password != "" {
+				diff.delHy2 = append(diff.delHy2, old.Password)
+			}
+		}
+	}
+	for id, nu := range next {
+		old, ok := m.users[id]
+		if ok && sameCredentials(old, nu) {
+			m.updateLimiterLocked(nu)
+			continue
+		}
+		if nu.UUID != "" {
+			diff.addVless = append(diff.addVless, vlessUserFromPanelUser(nu))
+		}
+		if nu.Password != "" {
+			name := nu.Name
+			if name == "" {
+				name = nu.Password
+			}
+			diff.addHy2 = append(diff.addHy2, option.Hysteria2User{Name: name, Password: nu.Password})
+			diff.addHy2IDs = append(diff.addHy2IDs, nu.ID)
+		}
+		m.updateLimiterLocked(nu)
+	}
+	return diff
+}
+
+// diffUsers returns how many inbound add/delete entries a user sync would
+// produce. It is used by tests to verify speed-limit-only changes do not
+// re-add existing protocol users.
+func (m *UserManager) diffUsers(users []panelapi.User) (adds int, dels int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	next := make(map[int]panelapi.User, len(users))
+	for _, u := range users {
+		if u.ID > 0 {
+			next[u.ID] = u
+		}
+	}
+	diff := m.diffUsersLocked(next)
+	return len(diff.addVless) + len(diff.addHy2), len(diff.delVless) + len(diff.delHy2)
 }
 
 func (m *UserManager) updateLimiterLocked(u panelapi.User) {

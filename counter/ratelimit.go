@@ -147,7 +147,9 @@ func (l *RateLimiter) allow(n int) (bool, error) {
 		l.last = now
 	}
 	elapsed := now.Sub(l.last).Seconds()
-	if elapsed > 0 {
+	if elapsed < 0 {
+		l.last = now
+	} else if elapsed > 0 {
 		l.tokens += elapsed * float64(l.rate)
 		if l.tokens > float64(l.burst) {
 			l.tokens = float64(l.burst)
@@ -179,7 +181,9 @@ func (l *RateLimiter) reserve(n int) (time.Duration, error) {
 		l.last = now
 	}
 	elapsed := now.Sub(l.last).Seconds()
-	if elapsed > 0 {
+	if elapsed < 0 {
+		l.last = now
+	} else if elapsed > 0 {
 		l.tokens += elapsed * float64(l.rate)
 		if l.tokens > float64(l.burst) {
 			l.tokens = float64(l.burst)

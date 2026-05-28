@@ -53,3 +53,13 @@ Operational milestone from the Germany LXC test node:
 - With sing-box-layer HY2 bandwidth overrides and client bandwidth ignored, HY2 download stalls dropped to low-probability/occasional during repeated tests.
 - The observed upload tail burst above the tested cap became rare. In that test round the active user had `speed_limit=200`, so it was not a 300 Mbps node-limit validation.
 - The feature goal is HY2 parity/completeness for the agent: node-wide target capacity such as 500 Mbps should be advertised through HY2, while panel per-user limits remain enforced separately.
+
+## Stats API safety
+
+The stats API defaults to a Unix socket:
+
+```text
+-api unix:/tmp/mini-sb-agent.sock
+```
+
+Keep that default for production unless a local supervisor needs a TCP socket. The stats API does not implement its own password or token check. If TCP is used, bind only to loopback, for example `127.0.0.1:PORT`, and put any remote access behind an authenticated local panel or tunnel. Do not bind the stats API directly to `0.0.0.0` or a public VPS address.
