@@ -260,6 +260,8 @@ func main() {
 	panelToken := flag.String("panel-token", "", "Panel API node token")
 	panelNodeID := flag.String("panel-node-id", "", "Panel API node id")
 	panelNodeType := flag.String("panel-node-type", "vless", "Panel API node type")
+	var panelRoutesFlag repeatableStringFlag
+	flag.Var(&panelRoutesFlag, "panel-route", "Panel route node_type:inbound_tag:node_id; repeat for single-process multi-inbound stats routing")
 	panelEvery := flag.Duration("panel-every", time.Minute, "Panel API sync interval")
 	nodeRateMbps := flag.Int("node-rate-mbps", 0, "shared node rate limit in Mbps; 0 disables")
 	hy2UpMbps := flag.Int("hy2-up-mbps", 0, "Hysteria2 inbound advertised upload bandwidth in Mbps; 0 keeps config value")
@@ -320,25 +322,38 @@ func main() {
 		}
 	}
 
-	var panel panelapi.Panel
-	if *panelURL != "" {
-		panel = panelapi.NewClient(*panelURL, *panelToken, *panelNodeID, *panelNodeType)
-	} else if *users != "" {
-		panel = panelapi.LocalUsers{Path: *users}
+	applyUsers := func(list []panelapi.User) error {
+		if err := userManager.ApplyBox(collectInbounds(b), list); err != nil {
+			return err
+		}
+		h.RemoveAbsent(userManager.ActiveIDs())
+		return nil
 	}
-	if panel != nil {
+	if *panelURL != "" {
+		routes, err := parsePanelRoutes([]string(panelRoutesFlag), *panelURL, *panelToken, legacyPanelRoute{
+			nodeType: *panelNodeType,
+			nodeID:   *panelNodeID,
+		})
+		if err != nil {
+			log.Fatal(err)
+		}
+		if len(routes) > 0 {
+			syncer := &panelapi.MultiSyncer{
+				Snapshot: h.SnapshotDelta,
+				Commit:   h.CommitSnapshot,
+				Users:    applyUsers,
+				Every:    *panelEvery,
+				Routes:   panelRoutesForSyncer(routes),
+			}
+			go syncer.Run(ctx)
+		}
+	} else if *users != "" {
 		syncer := &panelapi.Syncer{
-			Panel:    panel,
+			Panel:    panelapi.LocalUsers{Path: *users},
 			Snapshot: h.SnapshotDelta,
 			Commit:   h.CommitSnapshot,
-			Users: func(list []panelapi.User) error {
-				if err := userManager.ApplyBox(collectInbounds(b), list); err != nil {
-					return err
-				}
-				h.RemoveAbsent(userManager.ActiveIDs())
-				return nil
-			},
-			Every: *panelEvery,
+			Users:    applyUsers,
+			Every:    *panelEvery,
 		}
 		go syncer.Run(ctx)
 	}
