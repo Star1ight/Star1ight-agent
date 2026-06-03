@@ -26,6 +26,9 @@ type xboardGenerateOptions struct {
 	PanelToken      string
 	PanelNodeID     string
 	PanelNodeType   string
+	NodeMode        string
+	VLESSNodeID     string
+	HY2NodeID       string
 	Out             string
 	NodeTypeOutPath string
 	CertPath        string
@@ -37,41 +40,115 @@ func runXboardGenerateConfig(args []string) int {
 	var opts xboardGenerateOptions
 	fs.StringVar(&opts.PanelURL, "panel-url", "", "Panel API base URL")
 	fs.StringVar(&opts.PanelToken, "panel-token", "", "Panel API node token")
-	fs.StringVar(&opts.PanelNodeID, "panel-node-id", "", "Panel API node id")
-	fs.StringVar(&opts.PanelNodeType, "panel-node-type", "auto", "Panel API node type: auto, vless, hysteria2, hysteria")
+	fs.StringVar(&opts.PanelNodeID, "panel-node-id", "", "Panel API node id for single-node mode")
+	fs.StringVar(&opts.PanelNodeType, "panel-node-type", "", "deprecated; use --node-mode")
+	fs.StringVar(&opts.NodeMode, "node-mode", "vless", "node mode: vless, hy2, both")
+	fs.StringVar(&opts.VLESSNodeID, "vless-node-id", "", "VLESS Reality node id; default uses --panel-node-id")
+	fs.StringVar(&opts.HY2NodeID, "hy2-node-id", "", "HY2 node id; default uses --panel-node-id")
 	fs.StringVar(&opts.Out, "out", "config.generated.json", "output sing-box config path")
-	fs.StringVar(&opts.NodeTypeOutPath, "node-type-out", "", "optional file to write detected node type")
+	fs.StringVar(&opts.NodeTypeOutPath, "node-type-out", "", "optional file to write selected node mode")
 	fs.StringVar(&opts.CertPath, "cert", "", "HY2 certificate path; default is cert.pem next to --out")
 	fs.StringVar(&opts.KeyPath, "key", "", "HY2 private key path; default is key.pem next to --out")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if opts.PanelURL == "" || opts.PanelToken == "" || opts.PanelNodeID == "" || opts.Out == "" {
-		fmt.Fprintln(os.Stderr, "missing required --panel-url/--panel-token/--panel-node-id/--out")
+	if opts.PanelURL == "" || opts.PanelToken == "" || opts.Out == "" {
+		fmt.Fprintln(os.Stderr, "missing required --panel-url/--panel-token/--out")
 		return 2
 	}
-	nodeType, err := generateXboardConfig(context.Background(), opts)
+	if opts.NodeMode == "" && opts.PanelNodeType != "" {
+		opts.NodeMode = normalizeNodeMode(opts.PanelNodeType)
+	}
+	if opts.NodeMode == "" {
+		opts.NodeMode = "vless"
+	}
+	mode, err := generateXboardConfig(context.Background(), opts)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	fmt.Printf("generated %s for node_type=%s\n", opts.Out, nodeType)
+	fmt.Printf("generated %s for node_mode=%s\n", opts.Out, mode)
 	return 0
 }
 
+func normalizeNodeMode(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "vless", "vless-reality", "reality":
+		return "vless"
+	case "hy2", "hysteria", "hysteria2":
+		return "hy2"
+	case "both", "dual", "all":
+		return "both"
+	default:
+		return strings.ToLower(strings.TrimSpace(v))
+	}
+}
+
 func generateXboardConfig(ctx context.Context, opts xboardGenerateOptions) (string, error) {
-	nodeType := opts.PanelNodeType
-	var cfg panelapi.NodeConfig
-	var err error
-	if nodeType == "" || nodeType == "auto" {
-		nodeType, cfg, err = panelapi.ProbeNodeConfig(ctx, opts.PanelURL, opts.PanelToken, opts.PanelNodeID)
-	} else {
-		cfg, err = panelapi.NewClient(opts.PanelURL, opts.PanelToken, opts.PanelNodeID, nodeType).FetchNodeConfig(ctx)
+	mode := normalizeNodeMode(opts.NodeMode)
+	if mode == "" || mode == "auto" {
+		mode = normalizeNodeMode(opts.PanelNodeType)
 	}
-	if err != nil {
-		return "", err
+	if mode == "" || mode == "auto" {
+		mode = "vless"
 	}
-	data, err := buildSingBoxConfigFromNode(cfg, opts)
+	var inbounds []any
+	switch mode {
+	case "vless":
+		id := firstNonEmpty(opts.VLESSNodeID, opts.PanelNodeID)
+		if id == "" {
+			return "", fmt.Errorf("vless mode requires --panel-node-id or --vless-node-id")
+		}
+		cfg, err := panelapi.NewClient(opts.PanelURL, opts.PanelToken, id, "vless").FetchNodeConfig(ctx)
+		if err != nil {
+			return "", err
+		}
+		inbound, err := inboundFromNodeConfig(cfg, opts, defaultListen(cfg.ListenIP))
+		if err != nil {
+			return "", err
+		}
+		inbounds = append(inbounds, inbound)
+	case "hy2":
+		id := firstNonEmpty(opts.HY2NodeID, opts.PanelNodeID)
+		if id == "" {
+			return "", fmt.Errorf("hy2 mode requires --panel-node-id or --hy2-node-id")
+		}
+		cfg, err := panelapi.NewClient(opts.PanelURL, opts.PanelToken, id, "hysteria").FetchNodeConfig(ctx)
+		if err != nil {
+			return "", err
+		}
+		inbound, err := inboundFromNodeConfig(cfg, opts, defaultListen(cfg.ListenIP))
+		if err != nil {
+			return "", err
+		}
+		inbounds = append(inbounds, inbound)
+	case "both":
+		vlessID := firstNonEmpty(opts.VLESSNodeID, opts.PanelNodeID)
+		hy2ID := opts.HY2NodeID
+		if vlessID == "" || hy2ID == "" {
+			return "", fmt.Errorf("both mode requires --vless-node-id and --hy2-node-id")
+		}
+		vlessCfg, err := panelapi.NewClient(opts.PanelURL, opts.PanelToken, vlessID, "vless").FetchNodeConfig(ctx)
+		if err != nil {
+			return "", fmt.Errorf("fetch vless node config: %w", err)
+		}
+		hy2Cfg, err := panelapi.NewClient(opts.PanelURL, opts.PanelToken, hy2ID, "hysteria").FetchNodeConfig(ctx)
+		if err != nil {
+			return "", fmt.Errorf("fetch hy2 node config: %w", err)
+		}
+		vlessInbound, err := inboundFromNodeConfig(vlessCfg, opts, defaultListen(vlessCfg.ListenIP))
+		if err != nil {
+			return "", err
+		}
+		hy2Inbound, err := inboundFromNodeConfig(hy2Cfg, opts, defaultListen(hy2Cfg.ListenIP))
+		if err != nil {
+			return "", err
+		}
+		inbounds = append(inbounds, vlessInbound, hy2Inbound)
+	default:
+		return "", fmt.Errorf("--node-mode must be vless, hy2, or both")
+	}
+	data, err := buildSingBoxConfigFromInbounds(inbounds)
 	if err != nil {
 		return "", err
 	}
@@ -85,25 +162,24 @@ func generateXboardConfig(ctx context.Context, opts xboardGenerateOptions) (stri
 		if err := os.MkdirAll(filepath.Dir(opts.NodeTypeOutPath), 0755); err != nil {
 			return "", err
 		}
-		if err := os.WriteFile(opts.NodeTypeOutPath, []byte(nodeType+"\n"), 0600); err != nil {
+		if err := os.WriteFile(opts.NodeTypeOutPath, []byte(mode+"\n"), 0600); err != nil {
 			return "", err
 		}
 	}
-	return nodeType, nil
+	return mode, nil
 }
 
-func buildSingBoxConfigFromNode(cfg panelapi.NodeConfig, opts xboardGenerateOptions) ([]byte, error) {
-	listen := cfg.ListenIP
+func defaultListen(listen string) string {
 	if listen == "" {
-		listen = "::"
+		return "::"
 	}
-	inbound, err := inboundFromNodeConfig(cfg, opts, listen)
-	if err != nil {
-		return nil, err
-	}
+	return listen
+}
+
+func buildSingBoxConfigFromInbounds(inbounds []any) ([]byte, error) {
 	root := map[string]any{
 		"log":      map[string]any{"level": "warn", "timestamp": true},
-		"inbounds": []any{inbound},
+		"inbounds": inbounds,
 		"outbounds": []any{
 			map[string]any{"type": "direct", "tag": "direct"},
 			map[string]any{"type": "block", "tag": "block"},
@@ -112,6 +188,14 @@ func buildSingBoxConfigFromNode(cfg panelapi.NodeConfig, opts xboardGenerateOpti
 		"route": map[string]any{"final": "direct"},
 	}
 	return json.MarshalIndent(root, "", "  ")
+}
+
+func buildSingBoxConfigFromNode(cfg panelapi.NodeConfig, opts xboardGenerateOptions) ([]byte, error) {
+	inbound, err := inboundFromNodeConfig(cfg, opts, defaultListen(cfg.ListenIP))
+	if err != nil {
+		return nil, err
+	}
+	return buildSingBoxConfigFromInbounds([]any{inbound})
 }
 
 func inboundFromNodeConfig(cfg panelapi.NodeConfig, opts xboardGenerateOptions, listen string) (map[string]any, error) {
@@ -137,8 +221,8 @@ func vlessInboundFromNodeConfig(cfg panelapi.NodeConfig, listen string) (map[str
 	}
 	serverName := firstNonEmpty(cfg.TLSSettings.ServerName, "www.microsoft.com")
 	handshakePort := 443
-	if cfg.TLSSettings.ServerPort != "" {
-		if p, err := strconv.Atoi(cfg.TLSSettings.ServerPort); err == nil && p > 0 {
+	if cfg.TLSSettings.ServerPort.String() != "" {
+		if p, err := strconv.Atoi(cfg.TLSSettings.ServerPort.String()); err == nil && p > 0 {
 			handshakePort = p
 		}
 	}

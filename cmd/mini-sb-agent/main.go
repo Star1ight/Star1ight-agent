@@ -271,6 +271,8 @@ func main() {
 	panelToken := flag.String("panel-token", "", "Panel API node token")
 	panelNodeID := flag.String("panel-node-id", "", "Panel API node id")
 	panelNodeType := flag.String("panel-node-type", "vless", "Panel API node type")
+	panelHY2NodeID := flag.String("panel-hy2-node-id", "", "Panel API HY2 node id for dual-node installs")
+	panelHY2NodeType := flag.String("panel-hy2-node-type", "hysteria", "Panel API HY2 node type")
 	panelEvery := flag.Duration("panel-every", time.Minute, "Panel API sync interval")
 	nodeRateMbps := flag.Int("node-rate-mbps", 0, "shared node rate limit in Mbps; 0 disables")
 	hy2UpMbps := flag.Int("hy2-up-mbps", 0, "Hysteria2 inbound advertised upload bandwidth in Mbps; 0 keeps config value")
@@ -333,7 +335,15 @@ func main() {
 
 	var panel panelapi.Panel
 	if *panelURL != "" {
-		panel = panelapi.NewClient(*panelURL, *panelToken, *panelNodeID, *panelNodeType)
+		primary := panelapi.NewClient(*panelURL, *panelToken, *panelNodeID, *panelNodeType)
+		if *panelHY2NodeID != "" {
+			panel = panelapi.MultiPanel{Panels: []panelapi.Panel{
+				primary,
+				panelapi.NewClient(*panelURL, *panelToken, *panelHY2NodeID, *panelHY2NodeType),
+			}}
+		} else {
+			panel = primary
+		}
 	} else if *users != "" {
 		panel = panelapi.LocalUsers{Path: *users}
 	}

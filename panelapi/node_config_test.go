@@ -36,7 +36,7 @@ func TestFetchNodeConfigReadsVLESSRealityFields(t *testing.T) {
 	if cfg.Protocol != "vless" || cfg.ListenIP != "0.0.0.0" || cfg.ServerPort != 10001 || cfg.Flow != "xtls-rprx-vision" {
 		t.Fatalf("unexpected config: %+v", cfg)
 	}
-	if cfg.TLSSettings.ServerName != "www.apple.com" || cfg.TLSSettings.ServerPort != "443" || cfg.TLSSettings.PrivateKey != "priv" || cfg.TLSSettings.ShortID != "sid" {
+	if cfg.TLSSettings.ServerName != "www.apple.com" || cfg.TLSSettings.ServerPort.String() != "443" || cfg.TLSSettings.PrivateKey != "priv" || cfg.TLSSettings.ShortID != "sid" {
 		t.Fatalf("unexpected tls settings: %+v", cfg.TLSSettings)
 	}
 	if cfg.BaseConfig.PullInterval != 60 || cfg.BaseConfig.PushInterval != 60 {

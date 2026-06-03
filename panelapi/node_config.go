@@ -5,8 +5,29 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 )
+
+type StringInt string
+
+func (s *StringInt) UnmarshalJSON(data []byte) error {
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		*s = StringInt(text)
+		return nil
+	}
+	var n int
+	if err := json.Unmarshal(data, &n); err == nil {
+		*s = StringInt(strconv.Itoa(n))
+		return nil
+	}
+	return fmt.Errorf("expected string or integer")
+}
+
+func (s StringInt) String() string {
+	return string(s)
+}
 
 type BaseConfig struct {
 	PushInterval int `json:"push_interval,omitempty"`
@@ -24,7 +45,7 @@ type ECHConfig struct {
 
 type TLSSettings struct {
 	ServerName    string    `json:"server_name,omitempty"`
-	ServerPort    string    `json:"server_port,omitempty"`
+	ServerPort    StringInt `json:"server_port,omitempty"`
 	PublicKey     string    `json:"public_key,omitempty"`
 	PrivateKey    string    `json:"private_key,omitempty"`
 	ShortID       string    `json:"short_id,omitempty"`
