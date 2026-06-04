@@ -90,7 +90,7 @@ mini-sb-agent one-click installer
   --gomemlimit VALUE               默认 40MiB；极小内存可用 36MiB
   --gogc N                         默认 70；极小内存可用 60
   --gomaxprocs N                   默认 1
-  --version TAG                    GitHub Release tag，默认 v0.1.1
+  --version TAG                    GitHub Release tag，默认 v0.1.2
   环境变量 MINI_SB_BASE_URL         可覆盖下载地址，测试/内网安装用
   --force                          覆盖旧安装
   --yes                            非交互确认，配合命令行参数使用
