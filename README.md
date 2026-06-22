@@ -1,6 +1,6 @@
 # mini-sb-agent
 
-`mini-sb-agent` 是一个专为 **Alpine Linux** 环境设计的轻量级 `sing-box` 节点管理客户端，适用于内存受限的 NAT / 小内存 VPS，支持通过 Xboard 面板实现多节点与多用户的管理、一键导入 Clash 等代理应用程序。
+`mini-sb-agent` 是一个轻量级 `sing-box` 内核的节点管理客户端，适用于内存受限的 NAT / 小内存 VPS（alpine debian均支持），支持通过 Xboard 面板实现多节点与多用户的管理、一键导入 Clash 等代理应用程序。
 
 > **免责声明**：本项目基于官方 `sing-box` 精简改良。本项目不对任何安全性与可靠性负责，使用本项目即表示您默认同意此条款。
 
@@ -104,7 +104,7 @@ go build -tags tun -o mini-sb-agent ./cmd/mini-sb-agent
 </details>
 
 ### 2. 一键安装脚本
-在您的 Alpine 小鸡上运行以下命令，按提示输入配置信息即可：
+在您的小鸡上运行以下命令，按提示输入配置信息即可：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ashvvvvv/mini-sb-agent/master/install.sh | sh
