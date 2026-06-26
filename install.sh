@@ -2,7 +2,7 @@
 set -eu
 
 APP="mini-sb-agent"
-REPO="ashvvvvv/mini-sb-agent"
+REPO="Star1ight/Star1ight-agent"
 VERSION="v0.1.2"
 INSTALL_DIR="/opt/mini-sb-agent"
 RUN_DIR="/run/mini-sb-agent"
@@ -11,6 +11,9 @@ NODE_MODE="vless"
 PANEL_NODE_TYPE="vless"
 VLESS_NODE_ID=""
 HY2_NODE_ID=""
+MACHINE_ID=""
+MACHINE_TOKEN=""
+MACHINE_EVERY="60s"
 PANEL_EVERY="60s"
 NODE_RATE_MBPS="0"
 HY2_UP_MBPS="0"
@@ -81,6 +84,9 @@ mini-sb-agent one-click installer
   --panel-node-id ID               兼容旧参数；单节点模式下等同对应节点 ID
   --vless-node-id ID               VLESS Reality 节点 ID
   --hy2-node-id ID                 HY2 节点 ID
+  --machine-id ID                  可选：XB 服务器管理的 machine_id，仅用于上报机器状态
+  --machine-token TOKEN            可选：XB 服务器管理的 machine token；启用 machine-id 时必填
+  --machine-every DURATION         机器状态上报间隔，默认 60s
   --panel-every DURATION           默认 60s
 
   --config-file PATH               可选：使用本地 config.json，跳过面板节点配置生成
@@ -228,6 +234,9 @@ while [ "$#" -gt 0 ]; do
     --node-mode) NODE_MODE="${2:-}"; shift 2 ;;
     --vless-node-id) VLESS_NODE_ID="${2:-}"; shift 2 ;;
     --hy2-node-id) HY2_NODE_ID="${2:-}"; shift 2 ;;
+    --machine-id) MACHINE_ID="${2:-}"; shift 2 ;;
+    --machine-token) MACHINE_TOKEN="${2:-}"; shift 2 ;;
+    --machine-every) MACHINE_EVERY="${2:-}"; shift 2 ;;
     --panel-node-type) PANEL_NODE_TYPE="${2:-}"; shift 2 ;;
     --panel-every) PANEL_EVERY="${2:-}"; shift 2 ;;
     --config-file) CONFIG_FILE="${2:-}"; shift 2 ;;
@@ -266,6 +275,7 @@ fi
 
 [ -n "$PANEL_URL" ] || err "缺少 --panel-url；可直接运行 sh install.sh 进入交互式安装"
 [ -n "$PANEL_TOKEN" ] || err "缺少 --panel-token；可直接运行 sh install.sh 进入交互式安装"
+[ -z "$MACHINE_ID" ] || [ -n "$MACHINE_TOKEN" ] || err "指定了 --machine-id 时必须同时提供 --machine-token"
 case "$NODE_MODE" in
   vless|VLESS|reality|Reality) NODE_MODE="vless" ;;
   hy2|HY2|hysteria|hysteria2) NODE_MODE="hy2" ;;
@@ -404,6 +414,9 @@ PANEL_NODE_ID=$(shell_quote "$PANEL_NODE_ID")
 PANEL_NODE_TYPE=$(shell_quote "$PANEL_NODE_TYPE")
 VLESS_NODE_ID=$(shell_quote "$VLESS_NODE_ID")
 HY2_NODE_ID=$(shell_quote "$HY2_NODE_ID")
+MACHINE_ID=$(shell_quote "$MACHINE_ID")
+MACHINE_TOKEN=$(shell_quote "$MACHINE_TOKEN")
+MACHINE_EVERY=$(shell_quote "$MACHINE_EVERY")
 PANEL_EVERY=$(shell_quote "$PANEL_EVERY")
 NODE_RATE_MBPS=$(shell_quote "$NODE_RATE_MBPS")
 HY2_UP_MBPS=$(shell_quote "$HY2_UP_MBPS")
@@ -454,6 +467,9 @@ set -- \
   -panel-token "$PANEL_TOKEN" \
   -panel-node-id "$PANEL_NODE_ID" \
   -panel-node-type "$SYNC_NODE_TYPE" \
+  -machine-id "$MACHINE_ID" \
+  -machine-token "$MACHINE_TOKEN" \
+  -machine-every "$MACHINE_EVERY" \
   -panel-every "$PANEL_EVERY" \
   -node-rate-mbps "$NODE_RATE_MBPS"
 if [ "${NODE_MODE:-vless}" = "both" ]; then
@@ -485,6 +501,9 @@ panel_node_id=$PANEL_NODE_ID
 panel_node_type=$PANEL_NODE_TYPE
 vless_node_id=$VLESS_NODE_ID
 hy2_node_id=$HY2_NODE_ID
+machine_id=$MACHINE_ID
+machine_token=$MACHINE_TOKEN
+machine_every=$MACHINE_EVERY
 protocol=$PROTOCOL
 EOF
 chmod 0600 "$INSTALL_DIR/install.meta"
@@ -590,4 +609,3 @@ info "完成"
 echo "安装目录：$INSTALL_DIR"
 echo "卸载命令：$INSTALL_DIR/uninstall.sh"
 echo "状态接口：curl --unix-socket $RUN_DIR/stats.sock http://x/stats"
-

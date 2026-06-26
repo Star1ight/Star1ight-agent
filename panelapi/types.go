@@ -14,3 +14,21 @@ type UserList struct {
 }
 
 type PushRequest map[int][]int64
+
+type UsagePair struct {
+	Total uint64
+	Used  uint64
+}
+
+type NetSpeed struct {
+	InSpeed  float64
+	OutSpeed float64
+}
+
+type MachineStatus struct {
+	CPU  float64
+	Mem  UsagePair
+	Swap UsagePair
+	Disk UsagePair
+	Net  *NetSpeed
+}

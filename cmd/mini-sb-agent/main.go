@@ -271,6 +271,9 @@ func main() {
 	panelToken := flag.String("panel-token", "", "Panel API node token")
 	panelNodeID := flag.String("panel-node-id", "", "Panel API node id")
 	panelNodeType := flag.String("panel-node-type", "vless", "Panel API node type")
+	machineID := flag.String("machine-id", "", "Optional Xboard machine id for machine status reporting")
+	machineToken := flag.String("machine-token", "", "Optional Xboard machine token for machine status reporting")
+	machineEvery := flag.Duration("machine-every", time.Minute, "Xboard machine status reporting interval")
 	panelHY2NodeID := flag.String("panel-hy2-node-id", "", "Panel API HY2 node id for dual-node installs")
 	panelHY2NodeType := flag.String("panel-hy2-node-type", "hysteria", "Panel API HY2 node type")
 	panelEvery := flag.Duration("panel-every", time.Minute, "Panel API sync interval")
@@ -334,6 +337,7 @@ func main() {
 	}
 
 	var panel panelapi.Panel
+	var machineReporter panelapi.MachineReporter
 	if *panelURL != "" {
 		primary := panelapi.NewClient(*panelURL, *panelToken, *panelNodeID, *panelNodeType)
 		if *panelHY2NodeID != "" {
@@ -343,6 +347,12 @@ func main() {
 			}}
 		} else {
 			panel = primary
+		}
+		if *machineID != "" {
+			machineReporter, err = buildMachineReporter(*panelURL, *machineID, *machineToken)
+			if err != nil {
+				log.Fatal(err)
+			}
 		}
 	} else if *users != "" {
 		panel = panelapi.LocalUsers{Path: *users}
@@ -362,6 +372,9 @@ func main() {
 			Every: *panelEvery,
 		}
 		go syncer.Run(ctx)
+	}
+	if machineReporter != nil {
+		startMachineReporter(ctx, machineReporter, *machineEvery)
 	}
 
 	<-ctx.Done()

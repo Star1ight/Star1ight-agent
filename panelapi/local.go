@@ -53,3 +53,7 @@ type Panel interface {
 	FetchUsers(ctx context.Context) ([]User, error)
 	PushTraffic(ctx context.Context, delta map[string]map[string][2]int64) error
 }
+
+type MachineReporter interface {
+	ReportMachineStatus(ctx context.Context, status MachineStatus) error
+}

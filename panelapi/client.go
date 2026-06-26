@@ -13,11 +13,13 @@ import (
 )
 
 type Client struct {
-	BaseURL  string
-	Token    string
-	NodeID   string
-	NodeType string
-	HTTP     *http.Client
+	BaseURL      string
+	Token        string
+	NodeID       string
+	NodeType     string
+	MachineID    string
+	MachineToken string
+	HTTP         *http.Client
 }
 
 func NewClient(baseURL, token, nodeID, nodeType string) *Client {
@@ -43,6 +45,9 @@ func (c *Client) endpoint(path string) (string, error) {
 	q := u.Query()
 	if c.Token != "" {
 		q.Set("token", c.Token)
+	}
+	if c.MachineID != "" {
+		q.Set("machine_id", c.MachineID)
 	}
 	if c.NodeID != "" {
 		q.Set("node_id", c.NodeID)
@@ -155,6 +160,59 @@ func (c *Client) PushTraffic(ctx context.Context, delta map[string]map[string][2
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		return fmt.Errorf("panel api push status %s", resp.Status)
+	}
+	return nil
+}
+
+func (c *Client) ReportMachineStatus(ctx context.Context, status MachineStatus) error {
+	token := c.MachineToken
+	if token == "" {
+		return fmt.Errorf("panel api machine token is empty")
+	}
+	payload := map[string]any{
+		"token":      token,
+		"machine_id": c.MachineID,
+		"cpu":        status.CPU,
+		"mem": map[string]uint64{
+			"total": status.Mem.Total,
+			"used":  status.Mem.Used,
+		},
+	}
+	if status.Swap.Total > 0 || status.Swap.Used > 0 {
+		payload["swap"] = map[string]uint64{
+			"total": status.Swap.Total,
+			"used":  status.Swap.Used,
+		}
+	}
+	if status.Disk.Total > 0 || status.Disk.Used > 0 {
+		payload["disk"] = map[string]uint64{
+			"total": status.Disk.Total,
+			"used":  status.Disk.Used,
+		}
+	}
+	if status.Net != nil {
+		payload["net"] = map[string]float64{
+			"in_speed":  status.Net.InSpeed,
+			"out_speed": status.Net.OutSpeed,
+		}
+	}
+
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(payload); err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/v2/server/machine/status", &body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("panel api machine status %s", resp.Status)
 	}
 	return nil
 }
