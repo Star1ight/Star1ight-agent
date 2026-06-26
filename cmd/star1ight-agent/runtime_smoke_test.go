@@ -13,16 +13,16 @@ import (
 )
 
 func TestRuntimeSmokeIdleMemory(t *testing.T) {
-	if os.Getenv("MINI_SB_AGENT_RUNTIME_SMOKE") != "1" {
-		t.Skip("set MINI_SB_AGENT_RUNTIME_SMOKE=1 to run runtime smoke memory test")
+	if os.Getenv("STAR1IGHT_AGENT_RUNTIME_SMOKE") != "1" {
+		t.Skip("set STAR1IGHT_AGENT_RUNTIME_SMOKE=1 to run runtime smoke memory test")
 	}
-	bin := os.Getenv("MINI_SB_AGENT_BIN")
+	bin := os.Getenv("STAR1IGHT_AGENT_BIN")
 	if bin == "" {
-		t.Fatal("MINI_SB_AGENT_BIN is required")
+		t.Fatal("STAR1IGHT_AGENT_BIN is required")
 	}
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "config.json")
-	socketPath := filepath.Join(tmp, "mini-sb-agent.sock")
+	socketPath := filepath.Join(tmp, "star1ight-agent.sock")
 	config := `{
   "log": {"disabled": true},
   "inbounds": [],
@@ -60,7 +60,7 @@ func TestRuntimeSmokeIdleMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("mini-sb-agent idle RSS: %.2f MiB (%d KB)", float64(rssKB)/1024, rssKB)
+	t.Logf("star1ight-agent idle RSS: %.2f MiB (%d KB)", float64(rssKB)/1024, rssKB)
 	fmt.Printf("MEM_RSS_KB=%d\n", rssKB)
 }
 

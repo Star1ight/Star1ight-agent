@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"mini-sb-agent/panelapi"
+	"star1ight-agent/panelapi"
 )
 
 func buildMachineReporter(panelURL, machineID, machineToken string) (panelapi.MachineReporter, error) {

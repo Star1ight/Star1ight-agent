@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"mini-sb-agent/counter"
-	"mini-sb-agent/panelapi"
+	"star1ight-agent/counter"
+	"star1ight-agent/panelapi"
 
 	"github.com/sagernet/sing-box/adapter"
 	M "github.com/sagernet/sing/common/metadata"

@@ -1,4 +1,4 @@
-module mini-sb-agent
+module star1ight-agent
 
 go 1.25
 

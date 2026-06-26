@@ -16,8 +16,8 @@ import (
 	"syscall"
 	"time"
 
-	"mini-sb-agent/counter"
-	"mini-sb-agent/panelapi"
+	"star1ight-agent/counter"
+	"star1ight-agent/panelapi"
 
 	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
@@ -265,7 +265,7 @@ func main() {
 	}
 
 	config := flag.String("config", "config.json", "sing-box config path")
-	api := flag.String("api", "unix:/tmp/mini-sb-agent.sock", "local stats API listen addr; empty disables; supports unix:/path.sock")
+	api := flag.String("api", "unix:/tmp/star1ight-agent.sock", "local stats API listen addr; empty disables; supports unix:/path.sock")
 	users := flag.String("users", "", "local neutral user map json for dynamic protocol users")
 	panelURL := flag.String("panel-url", "", "Panel API base URL; empty disables panel sync")
 	panelToken := flag.String("panel-token", "", "Panel API node token")

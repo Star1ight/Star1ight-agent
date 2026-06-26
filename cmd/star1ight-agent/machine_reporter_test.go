@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"mini-sb-agent/panelapi"
+	"star1ight-agent/panelapi"
 )
 
 type stubMachineReporter struct {

@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"mini-sb-agent/panelapi"
+	"star1ight-agent/panelapi"
 )
 
 type xboardGenerateOptions struct {

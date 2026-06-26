@@ -1,6 +1,6 @@
-# mini-sb-agent
+# Star1ight agent
 
-`mini-sb-agent` 是一个轻量级 `sing-box` 内核的节点管理客户端，适用于内存受限的 NAT / 小内存 VPS（alpine debian均支持），支持通过 Xboard 面板实现多节点与多用户的管理、一键导入 Clash 等代理应用程序。
+`Star1ight agent` 是一个轻量级 `sing-box` 内核的节点管理客户端，适用于内存受限的 NAT / 小内存 VPS（alpine debian均支持），支持通过 Xboard 面板实现多节点与多用户的管理、一键导入 Clash 等代理应用程序。
 
 > **免责声明**：本项目基于官方 `sing-box` 精简改良。本项目不对任何安全性与可靠性负责，使用本项目即表示您默认同意此条款。
 
@@ -13,12 +13,12 @@
 2. **GC参数不合理**：默认参数不适合小内存nat机
 3. **高并发测速引发 OOM**：在进行多线程测速或大并发流量吞吐时，TCP 缓冲区（Socket Buffer）膨胀，代理程序与 TCP 缓冲区共同作用，导致进程被内核 OOM Killer 强杀。
 
-`mini-sb-agent` 针对上述痛点进行了精简与优化，主要压缩代理程序内存占用：
+`Star1ight agent` 针对上述痛点进行了精简与优化，主要压缩代理程序内存占用：
 
 * **精简协议栈**：编译期剔除 VMess、Trojan、Shadowsocks 等协议，仅保留 Hysteria 2 与 VLESS Reality。
 * **单进程低开销**：Hysteria 2 与 VLESS 运行于同一个进程内，常态空载物理内存（RSS）仅约 **16MB**。
 * **无用依赖削减**：删除精简了无用依赖库，使用二进制编译，以最大程度压缩内存占用。
-* **自动 GC 限制**：默认设置 `GOMEMLIMIT=40MiB`、`GOGC=70`、限制 `GOMAXPROCS=1`，防止 Go 虚拟机激进申请内存 （刚好匹配mini-sb-agent的参数）。
+* **自动 GC 限制**：默认设置 `GOMEMLIMIT=40MiB`、`GOGC=70`、限制 `GOMAXPROCS=1`，防止 Go 虚拟机激进申请内存 （刚好匹配Star1ight agent的参数）。
 
 ---
 
@@ -45,7 +45,7 @@
 如果您需要激活 TUN 虚拟网卡接口以接管主机的全局 network 路由（透明网关配置），必须在编译时加入 `tun` 编译标签(默认一键安装脚本中使用的是已编译不带tun版本)：
 
 ```bash
-go build -tags tun -o mini-sb-agent ./cmd/mini-sb-agent
+go build -tags tun -o star1ight-agent ./cmd/star1ight-agent
 ```
 
 如果未使用该标签（默认编译），TUN 协议接口将不会被编译打包，以此排除底层网络依赖，实现最高的二进制精简度和最小的内存开销。
@@ -79,7 +79,7 @@ go build -tags tun -o mini-sb-agent ./cmd/mini-sb-agent
 * *注：单个用户的限速仍会通过 `speed_limit` 在应用层单独被精准限制。*
 
 ### 5. Hysteria 2 密码自动映射 (Password Mapping)
-`mini-sb-agent` 会自动将该用户的 **VLESS UUID 作为其 Hysteria 2 的连接密码**。用户的面板 ID 将作为其 Hysteria 2 的用户名，方便将两种协议的流量统一统计上报。
+`Star1ight agent` 会自动将该用户的 **VLESS UUID 作为其 Hysteria 2 的连接密码**。用户的面板 ID 将作为其 Hysteria 2 的用户名，方便将两种协议的流量统一统计上报。
 
 ---
 
@@ -93,13 +93,13 @@ go build -tags tun -o mini-sb-agent ./cmd/mini-sb-agent
 <br>
 
 * **配置参考图 1（系统配置面板）：**
-<img src="https://raw.githubusercontent.com/ashvvvvv/mini-sb-agent/temp-assets-upload-branch/assets/img_1.jpg" width="600">
+<img src="https://raw.githubusercontent.com/Star1ight/Star1ight-agent/temp-assets-upload-branch/assets/img_1.jpg" width="600">
 
 * **配置参考图 2（VLess 节点编辑）：**
-<img src="https://raw.githubusercontent.com/ashvvvvv/mini-sb-agent/temp-assets-upload-branch/assets/img_2.jpg" width="600">
+<img src="https://raw.githubusercontent.com/Star1ight/Star1ight-agent/temp-assets-upload-branch/assets/img_2.jpg" width="600">
 
 * **配置参考图 3（Hysteria 节点编辑）：**
-<img src="https://raw.githubusercontent.com/ashvvvvv/mini-sb-agent/temp-assets-upload-branch/assets/img_3.jpg" width="600">
+<img src="https://raw.githubusercontent.com/Star1ight/Star1ight-agent/temp-assets-upload-branch/assets/img_3.jpg" width="600">
 
 </details>
 
@@ -107,7 +107,7 @@ go build -tags tun -o mini-sb-agent ./cmd/mini-sb-agent
 在您的小鸡上运行以下命令，按提示输入配置信息即可：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ashvvvvv/mini-sb-agent/master/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Star1ight/Star1ight-agent/master/install.sh | sh
 
 ```
 

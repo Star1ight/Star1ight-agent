@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"mini-sb-agent/panelapi"
+	"star1ight-agent/panelapi"
 )
 
 func TestUserManagerResolvesAliasesAndActiveIDs(t *testing.T) {

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sync"
 
-	"mini-sb-agent/counter"
-	"mini-sb-agent/panelapi"
+	"star1ight-agent/counter"
+	"star1ight-agent/panelapi"
 
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/option"

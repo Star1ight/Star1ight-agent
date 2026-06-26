@@ -1,12 +1,12 @@
 #!/bin/sh
 set -eu
 
-APP="mini-sb-agent"
+APP="star1ight-agent"
 REPO="Star1ight/Star1ight-agent"
 VERSION="v0.1.2"
-INSTALL_DIR="/opt/mini-sb-agent"
-RUN_DIR="/run/mini-sb-agent"
-SERVICE_NAME="mini-sb-agent"
+INSTALL_DIR="/opt/star1ight-agent"
+RUN_DIR="/run/star1ight-agent"
+SERVICE_NAME="star1ight-agent"
 NODE_MODE="vless"
 PANEL_NODE_TYPE="vless"
 VLESS_NODE_ID=""
@@ -42,15 +42,15 @@ INTERACTIVE="auto"
 
 usage() {
   cat <<'EOF'
-mini-sb-agent one-click installer
+star1ight-agent one-click installer
 
 用法示例：
 
   # 交互式一键安装：选择 VLESS Reality / HY2 / 两种都装
-  curl -fsSL https://raw.githubusercontent.com/ashvvvvv/mini-sb-agent/master/install.sh | sh
+  curl -fsSL https://raw.githubusercontent.com/Star1ight/Star1ight-agent/master/install.sh | sh
 
   # 如果 curl | sh 所在终端不能交互，就先下载再运行
-  curl -fsSL https://raw.githubusercontent.com/ashvvvvv/mini-sb-agent/master/install.sh -o install.sh && sh install.sh
+  curl -fsSL https://raw.githubusercontent.com/Star1ight/Star1ight-agent/master/install.sh -o install.sh && sh install.sh
 
   # 非交互安装：只装 VLESS Reality
   sh install.sh \
@@ -97,7 +97,7 @@ mini-sb-agent one-click installer
   --gogc N                         默认 70；极小内存可用 60
   --gomaxprocs N                   默认 1
   --version TAG                    GitHub Release tag，默认 v0.1.2
-  环境变量 MINI_SB_BASE_URL         可覆盖下载地址，测试/内网安装用
+  环境变量 STAR1IGHT_AGENT_BASE_URL  可覆盖下载地址，测试/内网安装用
   --force                          覆盖旧安装
   --yes                            非交互确认，配合命令行参数使用
   --interactive                    强制进入问答式安装
@@ -106,9 +106,9 @@ mini-sb-agent one-click installer
   -h, --help                       显示帮助
 
 安装后只保留：
-  /opt/mini-sb-agent/              程序、env、自动生成的 config.json、证书、卸载脚本、安装记录
-  /etc/systemd/system/mini-sb-agent.service 或 /etc/init.d/mini-sb-agent
-  /run/mini-sb-agent/              运行时 pid/socket，停止或卸载后清理
+  /opt/star1ight-agent/              程序、env、自动生成的 config.json、证书、卸载脚本、安装记录
+  /etc/systemd/system/star1ight-agent.service 或 /etc/init.d/star1ight-agent
+  /run/star1ight-agent/              运行时 pid/socket，停止或卸载后清理
 EOF
 }
 err() { echo "ERROR: $*" >&2; exit 1; }
@@ -315,9 +315,9 @@ case "$ARCH" in
   aarch64|arm64) ASSET_ARCH="arm64" ;;
   *) err "不支持的架构：$ARCH" ;;
 esac
-ASSET="mini-sb-agent-linux-$ASSET_ARCH"
-BASE_URL="${MINI_SB_BASE_URL:-https://github.com/$REPO/releases/download/$VERSION}"
-TMPDIR="$(mktemp -d /tmp/mini-sb-install.XXXXXX)"
+ASSET="star1ight-agent-linux-$ASSET_ARCH"
+BASE_URL="${STAR1IGHT_AGENT_BASE_URL:-https://github.com/$REPO/releases/download/$VERSION}"
+TMPDIR="$(mktemp -d /tmp/star1ight-agent-install.XXXXXX)"
 cleanup() { rm -rf "$TMPDIR"; }
 trap cleanup EXIT HUP INT TERM
 
@@ -389,7 +389,7 @@ if [ -x "$INSTALL_DIR/$APP" ]; then
   pkill -f "$INSTALL_DIR/$APP" 2>/dev/null || true
 fi
 rm -rf "$INSTALL_DIR" "$RUN_DIR"
-rm -f /tmp/mini-sb-agent.sock
+rm -f /tmp/star1ight-agent.sock
 
 info "安装到 $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR" "$RUN_DIR"
@@ -402,7 +402,7 @@ elif [ -n "$CONFIG_URL" ]; then
   fetch "$CONFIG_URL" "$INSTALL_DIR/config.json"
   chmod 0600 "$INSTALL_DIR/config.json"
 else
-  # config.json is generated just before mini-sb-agent starts. The generator
+  # config.json is generated just before star1ight-agent starts. The generator
   # exits immediately, so it adds no runtime process or resident memory.
   rm -f "$INSTALL_DIR/config.json"
 fi
@@ -431,9 +431,9 @@ chmod 0600 "$INSTALL_DIR/env"
 cat > "$INSTALL_DIR/generate-config.sh" <<'EOF'
 #!/bin/sh
 set -eu
-APP="/opt/mini-sb-agent/mini-sb-agent"
-CONFIG="/opt/mini-sb-agent/config.json"
-. /opt/mini-sb-agent/env
+APP="/opt/star1ight-agent/star1ight-agent"
+CONFIG="/opt/star1ight-agent/config.json"
+. /opt/star1ight-agent/env
 [ -s "$CONFIG" ] && exit 0
 set -- xboard-generate-config \
   --panel-url "$PANEL_URL" \
@@ -454,10 +454,10 @@ chmod 0755 "$INSTALL_DIR/generate-config.sh"
 cat > "$INSTALL_DIR/run.sh" <<'EOF'
 #!/bin/sh
 set -eu
-APP="/opt/mini-sb-agent/mini-sb-agent"
-CONFIG="/opt/mini-sb-agent/config.json"
-API="unix:/run/mini-sb-agent/stats.sock"
-. /opt/mini-sb-agent/env
+APP="/opt/star1ight-agent/star1ight-agent"
+CONFIG="/opt/star1ight-agent/config.json"
+API="unix:/run/star1ight-agent/stats.sock"
+. /opt/star1ight-agent/env
 export GOMAXPROCS GOMEMLIMIT GOGC
 SYNC_NODE_TYPE="$PANEL_NODE_TYPE"
 set -- \
@@ -511,10 +511,10 @@ chmod 0600 "$INSTALL_DIR/install.meta"
 cat > "$INSTALL_DIR/uninstall.sh" <<'EOF'
 #!/bin/sh
 set -eu
-APP="mini-sb-agent"
-INSTALL_DIR="/opt/mini-sb-agent"
-RUN_DIR="/run/mini-sb-agent"
-SERVICE_NAME="mini-sb-agent"
+APP="star1ight-agent"
+INSTALL_DIR="/opt/star1ight-agent"
+RUN_DIR="/run/star1ight-agent"
+SERVICE_NAME="star1ight-agent"
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
   systemctl stop "$SERVICE_NAME" 2>/dev/null || true
   systemctl disable "$SERVICE_NAME" 2>/dev/null || true
@@ -530,8 +530,8 @@ if [ -x "$INSTALL_DIR/$APP" ]; then
   pkill -f "$INSTALL_DIR/$APP" 2>/dev/null || true
 fi
 rm -rf "$INSTALL_DIR" "$RUN_DIR"
-rm -f /tmp/mini-sb-agent.sock
-printf '%s\n' "mini-sb-agent 已卸载，仅移除了本安装器创建的文件。"
+rm -f /tmp/star1ight-agent.sock
+printf '%s\n' "star1ight-agent 已卸载，仅移除了本安装器创建的文件。"
 EOF
 chmod 0755 "$INSTALL_DIR/uninstall.sh"
 
@@ -539,7 +539,7 @@ if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
   info "写入 systemd 服务"
   cat > "/etc/systemd/system/$SERVICE_NAME.service" <<EOF
 [Unit]
-Description=mini-sb-agent
+Description=star1ight-agent
 After=network-online.target
 Wants=network-online.target
 
@@ -548,9 +548,9 @@ Type=simple
 Environment=GOMAXPROCS=$GOMAXPROCS
 Environment=GOMEMLIMIT=$GOMEMLIMIT
 Environment=GOGC=$GOGC
-RuntimeDirectory=mini-sb-agent
-ExecStartPre=/opt/mini-sb-agent/generate-config.sh
-ExecStart=/opt/mini-sb-agent/run.sh
+RuntimeDirectory=star1ight-agent
+ExecStartPre=/opt/star1ight-agent/generate-config.sh
+ExecStart=/opt/star1ight-agent/run.sh
 Restart=always
 RestartSec=3
 LimitNOFILE=1048576
@@ -569,21 +569,21 @@ EOF
 elif command -v rc-service >/dev/null 2>&1; then
   info "写入 OpenRC 服务"
   cat > "/etc/conf.d/$SERVICE_NAME" <<EOF
-# Runtime options live in /opt/mini-sb-agent/env and are read by run.sh.
+# Runtime options live in /opt/star1ight-agent/env and are read by run.sh.
 EOF
   chmod 0600 "/etc/conf.d/$SERVICE_NAME"
   cat > "/etc/init.d/$SERVICE_NAME" <<'EOF'
 #!/sbin/openrc-run
-name="mini-sb-agent"
-description="mini-sb-agent"
-command="/opt/mini-sb-agent/run.sh"
+name="star1ight-agent"
+description="star1ight-agent"
+command="/opt/star1ight-agent/run.sh"
 command_background="yes"
-pidfile="/run/mini-sb-agent/mini-sb-agent.pid"
-output_log="/var/log/mini-sb-agent.log"
-error_log="/var/log/mini-sb-agent.err"
+pidfile="/run/star1ight-agent/star1ight-agent.pid"
+output_log="/var/log/star1ight-agent.log"
+error_log="/var/log/star1ight-agent.err"
 start_pre() {
-  checkpath -d -m 0755 /run/mini-sb-agent
-  /opt/mini-sb-agent/generate-config.sh
+  checkpath -d -m 0755 /run/star1ight-agent
+  /opt/star1ight-agent/generate-config.sh
 }
 EOF
   chmod 0755 "/etc/init.d/$SERVICE_NAME"
@@ -602,7 +602,7 @@ else
 fi
 
 info "验证安装残留"
-leftovers="$(find /tmp -maxdepth 1 -name 'mini-sb-install.*' -print 2>/dev/null | grep -v "$TMPDIR" || true)"
+leftovers="$(find /tmp -maxdepth 1 -name 'star1ight-agent-install.*' -print 2>/dev/null | grep -v "$TMPDIR" || true)"
 [ -z "$leftovers" ] || printf '%s\n' "$leftovers"
 
 info "完成"

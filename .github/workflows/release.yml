@@ -54,8 +54,8 @@ jobs:
           go build -trimpath \
             -tags 'with_quic with_utls' \
             -ldflags '-s -w -buildid=' \
-            -o 'dist/mini-sb-agent-${{ matrix.suffix }}' \
-            ./cmd/mini-sb-agent
+            -o 'dist/star1ight-agent-${{ matrix.suffix }}' \
+            ./cmd/star1ight-agent
 
       - name: Generate checksums
         shell: bash
@@ -67,10 +67,10 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mini-sb-agent-${{ matrix.suffix }}
+          name: star1ight-agent-${{ matrix.suffix }}
           path: |
-            dist/mini-sb-agent-${{ matrix.suffix }}
-            dist/mini-sb-agent-${{ matrix.suffix }}.sha256
+            dist/star1ight-agent-${{ matrix.suffix }}
+            dist/star1ight-agent-${{ matrix.suffix }}.sha256
           if-no-files-found: error
 
   release:
