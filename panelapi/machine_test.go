@@ -40,6 +40,10 @@ func TestReportMachineStatusPostsExpectedPayload(t *testing.T) {
 		},
 		Disk: UsagePair{Total: 102400, Used: 51200},
 		Net:  &NetSpeed{InSpeed: 123.25, OutSpeed: 456.75},
+		Traffic: &TrafficTotals{
+			Up:   987654,
+			Down: 1234567,
+		},
 	})
 	if err != nil {
 		t.Fatalf("ReportMachineStatus: %v", err)
@@ -80,6 +84,10 @@ func TestReportMachineStatusPostsExpectedPayload(t *testing.T) {
 	if !ok || net["in_speed"] != 123.25 || net["out_speed"] != 456.75 {
 		t.Fatalf("net = %#v", gotBody["net"])
 	}
+	traffic, ok := gotBody["traffic"].(map[string]any)
+	if !ok || traffic["up"] != float64(987654) || traffic["down"] != float64(1234567) {
+		t.Fatalf("traffic = %#v", gotBody["traffic"])
+	}
 }
 
 func TestReportMachineStatusOmitsOptionalNetWhenUnavailable(t *testing.T) {
@@ -112,6 +120,9 @@ func TestReportMachineStatusOmitsOptionalNetWhenUnavailable(t *testing.T) {
 	}
 	if _, ok := gotBody["disk"]; ok {
 		t.Fatalf("disk should be omitted, got %#v", gotBody["disk"])
+	}
+	if _, ok := gotBody["traffic"]; ok {
+		t.Fatalf("traffic should be omitted, got %#v", gotBody["traffic"])
 	}
 }
 

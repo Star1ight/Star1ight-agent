@@ -25,10 +25,16 @@ type NetSpeed struct {
 	OutSpeed float64
 }
 
+type TrafficTotals struct {
+	Up   uint64
+	Down uint64
+}
+
 type MachineStatus struct {
-	CPU  float64
-	Mem  UsagePair
-	Swap UsagePair
-	Disk UsagePair
-	Net  *NetSpeed
+	CPU     float64
+	Mem     UsagePair
+	Swap    UsagePair
+	Disk    UsagePair
+	Net     *NetSpeed
+	Traffic *TrafficTotals
 }

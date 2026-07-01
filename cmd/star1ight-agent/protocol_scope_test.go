@@ -25,6 +25,15 @@ func TestLoadOptionsAcceptsCoreNodeProtocols(t *testing.T) {
       "listen_port": 0,
       "users": [],
       "tls": {"enabled": true, "server_name": "example.com", "certificate_path": "/tmp/missing.crt", "key_path": "/tmp/missing.key"}
+    },
+    {
+      "type": "shadowsocks",
+      "tag": "ss-in",
+      "listen": "127.0.0.1",
+      "listen_port": 0,
+      "method": "2022-blake3-aes-256-gcm",
+      "password": "server-key",
+      "users": []
     }
   ],
   "outbounds": [{"type": "direct", "tag": "direct"}],
@@ -34,7 +43,7 @@ func TestLoadOptionsAcceptsCoreNodeProtocols(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := loadOptions(path); err != nil {
-		t.Fatalf("core VLESS/Hysteria2/direct options should load: %v", err)
+		t.Fatalf("core VLESS/Hysteria2/Shadowsocks/direct options should load: %v", err)
 	}
 }
 
@@ -78,7 +87,7 @@ func TestLoadOptionsRejectsUnsupportedTunInbound(t *testing.T) {
 }
 
 func TestLoadOptionsRejectsUnsupportedProxyProtocols(t *testing.T) {
-	unsupported := []string{"vmess", "trojan", "shadowsocks", "socks", "http", "mixed"}
+	unsupported := []string{"vmess", "trojan", "socks", "http", "mixed"}
 	for _, protocol := range unsupported {
 		t.Run(protocol, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.json")

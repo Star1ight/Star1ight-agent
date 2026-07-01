@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -29,6 +30,7 @@ func buildMachineReporter(panelURL, machineID, machineToken string) (panelapi.Ma
 var (
 	readUintFromMeminfoFunc = readUintFromMeminfo
 	diskUsageFunc           = diskUsage
+	networkSampleFunc       = sampleNetworkStatus
 )
 
 type cpuCollector struct {
@@ -102,6 +104,11 @@ func sampleMachineStatus(cpuSample func() (float64, error)) panelapi.MachineStat
 		swapUsed = swapTotal - swapFree
 	}
 	diskTotal, diskUsed := diskUsageFunc("/")
+	netSpeed, traffic, err := networkSampleFunc()
+	if err != nil {
+		netSpeed = nil
+		traffic = nil
+	}
 
 	return panelapi.MachineStatus{
 		CPU: cpu,
@@ -117,7 +124,82 @@ func sampleMachineStatus(cpuSample func() (float64, error)) panelapi.MachineStat
 			Total: diskTotal,
 			Used:  diskUsed,
 		},
+		Net:     netSpeed,
+		Traffic: traffic,
 	}
+}
+
+type netCollector struct {
+	prevRx   uint64
+	prevTx   uint64
+	prevAt   time.Time
+	ready    bool
+}
+
+var defaultNetCollector netCollector
+
+func sampleNetworkStatus() (*panelapi.NetSpeed, *panelapi.TrafficTotals, error) {
+	rx, tx, err := readNetworkTotals()
+	if err != nil {
+		return nil, nil, err
+	}
+	now := time.Now()
+	totals := &panelapi.TrafficTotals{Up: tx, Down: rx}
+	if !defaultNetCollector.ready {
+		defaultNetCollector.prevRx = rx
+		defaultNetCollector.prevTx = tx
+		defaultNetCollector.prevAt = now
+		defaultNetCollector.ready = true
+		return nil, totals, nil
+	}
+	elapsed := now.Sub(defaultNetCollector.prevAt).Seconds()
+	if elapsed <= 0 {
+		return nil, totals, nil
+	}
+	inSpeed := float64(rx-defaultNetCollector.prevRx) / elapsed
+	outSpeed := float64(tx-defaultNetCollector.prevTx) / elapsed
+	defaultNetCollector.prevRx = rx
+	defaultNetCollector.prevTx = tx
+	defaultNetCollector.prevAt = now
+	return &panelapi.NetSpeed{InSpeed: inSpeed, OutSpeed: outSpeed}, totals, nil
+}
+
+func readNetworkTotals() (uint64, uint64, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return 0, 0, err
+	}
+	var rx uint64
+	var tx uint64
+	for _, iface := range ifaces {
+		if (iface.Flags&net.FlagUp) == 0 || (iface.Flags&net.FlagLoopback) != 0 {
+			continue
+		}
+		counters, err := iface.Addrs()
+		if err != nil || len(counters) == 0 {
+			continue
+		}
+		statsPath := filepath.Join("/sys/class/net", iface.Name, "statistics")
+		ifaceRx, err := readUintFromFile(filepath.Join(statsPath, "rx_bytes"))
+		if err != nil {
+			continue
+		}
+		ifaceTx, err := readUintFromFile(filepath.Join(statsPath, "tx_bytes"))
+		if err != nil {
+			continue
+		}
+		rx += ifaceRx
+		tx += ifaceTx
+	}
+	return rx, tx, nil
+}
+
+func readUintFromFile(path string) (uint64, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
 }
 
 func machineReporterTick(ctx context.Context, reporter panelapi.MachineReporter, sampler func() panelapi.MachineStatus) error {

@@ -42,7 +42,7 @@ func runXboardGenerateConfig(args []string) int {
 	fs.StringVar(&opts.PanelToken, "panel-token", "", "Panel API node token")
 	fs.StringVar(&opts.PanelNodeID, "panel-node-id", "", "Panel API node id for single-node mode")
 	fs.StringVar(&opts.PanelNodeType, "panel-node-type", "", "deprecated; use --node-mode")
-	fs.StringVar(&opts.NodeMode, "node-mode", "vless", "node mode: vless, hy2, both")
+	fs.StringVar(&opts.NodeMode, "node-mode", "vless", "node mode: vless, hy2, ss, both")
 	fs.StringVar(&opts.VLESSNodeID, "vless-node-id", "", "VLESS Reality node id; default uses --panel-node-id")
 	fs.StringVar(&opts.HY2NodeID, "hy2-node-id", "", "HY2 node id; default uses --panel-node-id")
 	fs.StringVar(&opts.Out, "out", "config.generated.json", "output sing-box config path")
@@ -77,6 +77,8 @@ func normalizeNodeMode(v string) string {
 		return "vless"
 	case "hy2", "hysteria", "hysteria2":
 		return "hy2"
+	case "ss", "shadowsocks", "ss2022":
+		return "ss"
 	case "both", "dual", "all":
 		return "both"
 	default:
@@ -93,6 +95,8 @@ func generateXboardConfig(ctx context.Context, opts xboardGenerateOptions) (stri
 		mode = "vless"
 	}
 	var inbounds []any
+	var routeConfig map[string]any
+	var outbounds []any
 	switch mode {
 	case "vless":
 		id := firstNonEmpty(opts.VLESSNodeID, opts.PanelNodeID)
@@ -108,6 +112,10 @@ func generateXboardConfig(ctx context.Context, opts xboardGenerateOptions) (stri
 			return "", err
 		}
 		inbounds = append(inbounds, inbound)
+		outbounds, routeConfig, err = buildCustomRouting(cfg)
+		if err != nil {
+			return "", err
+		}
 	case "hy2":
 		id := firstNonEmpty(opts.HY2NodeID, opts.PanelNodeID)
 		if id == "" {
@@ -122,6 +130,10 @@ func generateXboardConfig(ctx context.Context, opts xboardGenerateOptions) (stri
 			return "", err
 		}
 		inbounds = append(inbounds, inbound)
+		outbounds, routeConfig, err = buildCustomRouting(cfg)
+		if err != nil {
+			return "", err
+		}
 	case "both":
 		vlessID := firstNonEmpty(opts.VLESSNodeID, opts.PanelNodeID)
 		hy2ID := opts.HY2NodeID
@@ -145,10 +157,32 @@ func generateXboardConfig(ctx context.Context, opts xboardGenerateOptions) (stri
 			return "", err
 		}
 		inbounds = append(inbounds, vlessInbound, hy2Inbound)
+		outbounds, routeConfig, err = mergeCustomRouting(vlessCfg, hy2Cfg)
+		if err != nil {
+			return "", err
+		}
+	case "ss":
+		id := firstNonEmpty(opts.PanelNodeID)
+		if id == "" {
+			return "", fmt.Errorf("ss mode requires --panel-node-id")
+		}
+		cfg, err := panelapi.NewClient(opts.PanelURL, opts.PanelToken, id, "shadowsocks").FetchNodeConfig(ctx)
+		if err != nil {
+			return "", err
+		}
+		inbound, err := inboundFromNodeConfig(cfg, opts, defaultListen(cfg.ListenIP))
+		if err != nil {
+			return "", err
+		}
+		inbounds = append(inbounds, inbound)
+		outbounds, routeConfig, err = buildCustomRouting(cfg)
+		if err != nil {
+			return "", err
+		}
 	default:
-		return "", fmt.Errorf("--node-mode must be vless, hy2, or both")
+		return "", fmt.Errorf("--node-mode must be vless, hy2, ss, or both")
 	}
-	data, err := buildSingBoxConfigFromInbounds(inbounds)
+	data, err := buildSingBoxConfigFromInbounds(inbounds, outbounds, routeConfig)
 	if err != nil {
 		return "", err
 	}
@@ -176,16 +210,25 @@ func defaultListen(listen string) string {
 	return listen
 }
 
-func buildSingBoxConfigFromInbounds(inbounds []any) ([]byte, error) {
+func buildSingBoxConfigFromInbounds(inbounds []any, customOutbounds []any, routeConfig map[string]any) ([]byte, error) {
+	outbounds := []any{
+		map[string]any{"type": "direct", "tag": "direct"},
+		map[string]any{"type": "block", "tag": "block"},
+		map[string]any{"type": "dns", "tag": "dns-out"},
+	}
+	outbounds = append(outbounds, customOutbounds...)
+	route := map[string]any{"final": "direct"}
+	if routeConfig != nil {
+		route = routeConfig
+		if _, ok := route["final"]; !ok {
+			route["final"] = "direct"
+		}
+	}
 	root := map[string]any{
-		"log":      map[string]any{"level": "warn", "timestamp": true},
-		"inbounds": inbounds,
-		"outbounds": []any{
-			map[string]any{"type": "direct", "tag": "direct"},
-			map[string]any{"type": "block", "tag": "block"},
-			map[string]any{"type": "dns", "tag": "dns-out"},
-		},
-		"route": map[string]any{"final": "direct"},
+		"log":       map[string]any{"level": "warn", "timestamp": true},
+		"inbounds":  inbounds,
+		"outbounds": outbounds,
+		"route":     route,
 	}
 	return json.MarshalIndent(root, "", "  ")
 }
@@ -195,7 +238,11 @@ func buildSingBoxConfigFromNode(cfg panelapi.NodeConfig, opts xboardGenerateOpti
 	if err != nil {
 		return nil, err
 	}
-	return buildSingBoxConfigFromInbounds([]any{inbound})
+	outbounds, routeConfig, err := buildCustomRouting(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return buildSingBoxConfigFromInbounds([]any{inbound}, outbounds, routeConfig)
 }
 
 func inboundFromNodeConfig(cfg panelapi.NodeConfig, opts xboardGenerateOptions, listen string) (map[string]any, error) {
@@ -207,6 +254,8 @@ func inboundFromNodeConfig(cfg panelapi.NodeConfig, opts xboardGenerateOptions, 
 			return nil, fmt.Errorf("unsupported hysteria version %d", cfg.Version)
 		}
 		return hy2InboundFromNodeConfig(cfg, opts, listen)
+	case "shadowsocks":
+		return shadowsocksInboundFromNodeConfig(cfg, listen)
 	default:
 		return nil, fmt.Errorf("unsupported node protocol %q", cfg.Protocol)
 	}
@@ -293,6 +342,31 @@ func hy2InboundFromNodeConfig(cfg panelapi.NodeConfig, opts xboardGenerateOption
 	return in, nil
 }
 
+func shadowsocksInboundFromNodeConfig(cfg panelapi.NodeConfig, listen string) (map[string]any, error) {
+	if cfg.ServerPort <= 0 {
+		return nil, fmt.Errorf("shadowsocks server_port is missing")
+	}
+	if strings.TrimSpace(cfg.Cipher) == "" {
+		return nil, fmt.Errorf("shadowsocks cipher is missing")
+	}
+	if strings.TrimSpace(cfg.ServerKey) == "" {
+		return nil, fmt.Errorf("shadowsocks server_key is missing")
+	}
+	in := map[string]any{
+		"type":        "shadowsocks",
+		"tag":         "ss-in",
+		"listen":      listen,
+		"listen_port": cfg.ServerPort,
+		"method":      cfg.Cipher,
+		"password":    cfg.ServerKey,
+		"managed":     true,
+	}
+	if networks := normalizeInboundNetworks(cfg.Network); len(networks) > 0 {
+		in["network"] = networks
+	}
+	return in, nil
+}
+
 func ensureSelfSignedCert(certPath, keyPath, serverName string) error {
 	if certPath == "" || keyPath == "" {
 		return fmt.Errorf("cert/key path is empty")
@@ -363,4 +437,237 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+func normalizeInboundNetworks(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	fields := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\t' || r == ' '
+	})
+	out := make([]string, 0, len(fields))
+	for _, field := range fields {
+		field = strings.ToLower(strings.TrimSpace(field))
+		if field == "" {
+			continue
+		}
+		if field == "tcp" || field == "udp" {
+			out = append(out, field)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func mergeCustomRouting(configs ...panelapi.NodeConfig) ([]any, map[string]any, error) {
+	var outbounds []any
+	var rules []any
+	seenTags := map[string]struct{}{
+		"direct":  {},
+		"block":   {},
+		"dns-out": {},
+	}
+
+	for _, cfg := range configs {
+		for _, raw := range cfg.CustomOutbounds {
+			built, tag, err := customOutboundToSingBox(raw)
+			if err != nil {
+				return nil, nil, err
+			}
+			key := strings.ToLower(strings.TrimSpace(tag))
+			if _, exists := seenTags[key]; exists {
+				continue
+			}
+			seenTags[key] = struct{}{}
+			outbounds = append(outbounds, built)
+		}
+	}
+
+	for _, cfg := range configs {
+		builtRules, err := buildStructuredRouteRules(cfg.CustomRouteRules, seenTags)
+		if err != nil {
+			return nil, nil, err
+		}
+		rules = append(rules, builtRules...)
+		if len(cfg.CustomRoutes) > 0 {
+			for _, raw := range cfg.CustomRoutes {
+				rules = append(rules, raw)
+			}
+		}
+	}
+
+	if len(rules) == 0 {
+		return outbounds, nil, nil
+	}
+	return outbounds, map[string]any{"rules": rules, "final": "direct"}, nil
+}
+
+func buildCustomRouting(cfg panelapi.NodeConfig) ([]any, map[string]any, error) {
+	return mergeCustomRouting(cfg)
+}
+
+func customOutboundToSingBox(cfg panelapi.OutboundConfig) (map[string]any, string, error) {
+	tag := strings.TrimSpace(cfg.Tag)
+	if tag == "" {
+		return nil, "", fmt.Errorf("custom_outbounds.tag is required")
+	}
+	protocol := normalizeOutboundProtocol(cfg.Protocol)
+	if protocol == "" {
+		return nil, "", fmt.Errorf("custom_outbound %q protocol is required", tag)
+	}
+	settings := cloneAnyMap(cfg.Settings)
+	if len(settings) == 0 {
+		return nil, "", fmt.Errorf("custom_outbound %q settings are required", tag)
+	}
+	settings["type"] = protocol
+	settings["tag"] = tag
+	if proxyTag := strings.TrimSpace(cfg.ProxyTag); proxyTag != "" {
+		settings["detour"] = proxyTag
+	}
+	return settings, tag, nil
+}
+
+func normalizeOutboundProtocol(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "hy2", "hysteria", "hysteria2":
+		return "hysteria2"
+	default:
+		return strings.ToLower(strings.TrimSpace(v))
+	}
+}
+
+func buildStructuredRouteRules(rules []panelapi.CustomRouteRule, availableTags map[string]struct{}) ([]any, error) {
+	if len(rules) == 0 {
+		return nil, nil
+	}
+	out := make([]any, 0, len(rules))
+	for _, rule := range rules {
+		if rule.Disabled {
+			continue
+		}
+		built, err := customRouteRuleToSingBox(rule, availableTags)
+		if err != nil {
+			return nil, err
+		}
+		if built != nil {
+			out = append(out, built)
+		}
+	}
+	return out, nil
+}
+
+func customRouteRuleToSingBox(rule panelapi.CustomRouteRule, availableTags map[string]struct{}) (map[string]any, error) {
+	match := map[string]any{}
+	appendNonEmptyStringSlice(match, "domain", rule.Match.Domains)
+	appendNonEmptyStringSlice(match, "domain_suffix", rule.Match.DomainSuffixes)
+	appendNonEmptyStringSlice(match, "ip_cidr", rule.Match.IPCIDRs)
+	appendNonEmptyStringSlice(match, "source_ip_cidr", rule.Match.SourceCIDRs)
+	appendNonEmptyStringSlice(match, "network", rule.Match.Networks)
+	appendPorts(match, "port", rule.Match.Ports)
+	appendPorts(match, "source_port", rule.Match.SourcePorts)
+	if len(match) == 0 {
+		return nil, nil
+	}
+
+	actionType := strings.ToLower(strings.TrimSpace(rule.Action.Type))
+	switch actionType {
+	case "", "route":
+		target := strings.TrimSpace(rule.Action.Target)
+		if target == "" {
+			return nil, fmt.Errorf("custom route %q route action requires target", rule.Name)
+		}
+		if availableTags != nil {
+			if _, ok := availableTags[strings.ToLower(target)]; !ok {
+				return nil, fmt.Errorf("custom route %q references unknown outbound %q", rule.Name, target)
+			}
+		}
+		match["outbound"] = target
+	case "direct":
+		match["outbound"] = "direct"
+	case "block":
+		match["outbound"] = "block"
+	default:
+		return nil, fmt.Errorf("custom route %q action %q is not supported", rule.Name, rule.Action.Type)
+	}
+	return match, nil
+}
+
+func appendNonEmptyStringSlice(dst map[string]any, key string, values []string) {
+	if len(values) == 0 {
+		return
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		out = append(out, value)
+	}
+	if len(out) == 0 {
+		return
+	}
+	dst[key] = out
+}
+
+func appendPorts(dst map[string]any, key string, values []string) {
+	if len(values) == 0 {
+		return
+	}
+	numericPorts := make([]uint16, 0, len(values))
+	stringPorts := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if strings.Contains(value, "-") || strings.Contains(value, ":") {
+			stringPorts = append(stringPorts, value)
+			continue
+		}
+		port, err := strconv.ParseUint(value, 10, 16)
+		if err != nil {
+			stringPorts = append(stringPorts, value)
+			continue
+		}
+		numericPorts = append(numericPorts, uint16(port))
+	}
+	if len(stringPorts) == 0 {
+		if len(numericPorts) == 1 {
+			dst[key] = numericPorts[0]
+		} else if len(numericPorts) > 1 {
+			dst[key] = numericPorts
+		}
+		return
+	}
+	if len(numericPorts) == 0 {
+		if len(stringPorts) == 1 {
+			dst[key] = stringPorts[0]
+		} else {
+			dst[key] = stringPorts
+		}
+		return
+	}
+	combined := make([]any, 0, len(numericPorts)+len(stringPorts))
+	for _, port := range numericPorts {
+		combined = append(combined, port)
+	}
+	for _, value := range stringPorts {
+		combined = append(combined, value)
+	}
+	dst[key] = combined
+}
+
+func cloneAnyMap(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+	return out
 }

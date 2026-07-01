@@ -23,9 +23,11 @@ func (s *stubMachineReporter) ReportMachineStatus(ctx context.Context, status pa
 func TestSampleMachineStatusCollectsRequiredMetrics(t *testing.T) {
 	origMeminfo := readUintFromMeminfoFunc
 	origDiskUsage := diskUsageFunc
+	origNetSample := networkSampleFunc
 	t.Cleanup(func() {
 		readUintFromMeminfoFunc = origMeminfo
 		diskUsageFunc = origDiskUsage
+		networkSampleFunc = origNetSample
 	})
 	readUintFromMeminfoFunc = func(key string) uint64 {
 		switch key {
@@ -44,6 +46,9 @@ func TestSampleMachineStatusCollectsRequiredMetrics(t *testing.T) {
 	diskUsageFunc = func(path string) (uint64, uint64) {
 		return 1000, 250
 	}
+	networkSampleFunc = func() (*panelapi.NetSpeed, *panelapi.TrafficTotals, error) {
+		return &panelapi.NetSpeed{InSpeed: 12.5, OutSpeed: 34.75}, &panelapi.TrafficTotals{Up: 111, Down: 222}, nil
+	}
 
 	status := sampleMachineStatus(func() (float64, error) { return 37.5, nil })
 	if status.CPU != 37.5 {
@@ -57,6 +62,12 @@ func TestSampleMachineStatusCollectsRequiredMetrics(t *testing.T) {
 	}
 	if status.Disk.Total != 1000 || status.Disk.Used != 250 {
 		t.Fatalf("Disk = %+v", status.Disk)
+	}
+	if status.Net == nil || status.Net.InSpeed != 12.5 || status.Net.OutSpeed != 34.75 {
+		t.Fatalf("Net = %+v", status.Net)
+	}
+	if status.Traffic == nil || status.Traffic.Up != 111 || status.Traffic.Down != 222 {
+		t.Fatalf("Traffic = %+v", status.Traffic)
 	}
 }
 

@@ -105,6 +105,8 @@ func (c *Client) matchesInbound(tag string) bool {
 		return tag == "vless-in"
 	case "hy2", "hysteria", "hysteria2":
 		return tag == "hy2-in"
+	case "ss", "ss2022", "shadowsocks":
+		return tag == "ss-in"
 	default:
 		return strings.Contains(strings.ToLower(tag), strings.ToLower(c.NodeType))
 	}
@@ -194,6 +196,12 @@ func (c *Client) ReportMachineStatus(ctx context.Context, status MachineStatus) 
 		payload["net"] = map[string]float64{
 			"in_speed":  status.Net.InSpeed,
 			"out_speed": status.Net.OutSpeed,
+		}
+	}
+	if status.Traffic != nil {
+		payload["traffic"] = map[string]uint64{
+			"up":   status.Traffic.Up,
+			"down": status.Traffic.Down,
 		}
 	}
 

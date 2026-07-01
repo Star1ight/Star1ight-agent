@@ -33,7 +33,12 @@ import (
 	"github.com/sagernet/sing-box/protocol/block"
 	"github.com/sagernet/sing-box/protocol/direct"
 	outboundDNS "github.com/sagernet/sing-box/protocol/dns"
+	outboundHTTP "github.com/sagernet/sing-box/protocol/http"
 	"github.com/sagernet/sing-box/protocol/hysteria2"
+	"github.com/sagernet/sing-box/protocol/shadowsocks"
+	"github.com/sagernet/sing-box/protocol/socks"
+	"github.com/sagernet/sing-box/protocol/ssh"
+	"github.com/sagernet/sing-box/protocol/tuic"
 	"github.com/sagernet/sing-box/protocol/vless"
 	badjson "github.com/sagernet/sing/common/json"
 	N "github.com/sagernet/sing/common/network"
@@ -125,12 +130,20 @@ func minimalContext(parent context.Context) context.Context {
 	inbounds := inbound.NewRegistry()
 	vless.RegisterInbound(inbounds)
 	hysteria2.RegisterInbound(inbounds)
+	shadowsocks.RegisterInbound(inbounds)
 	registerOptionalInbounds(inbounds)
 
 	outbounds := outbound.NewRegistry()
 	direct.RegisterOutbound(outbounds)
 	block.RegisterOutbound(outbounds)
 	outboundDNS.RegisterOutbound(outbounds)
+	shadowsocks.RegisterOutbound(outbounds)
+	socks.RegisterOutbound(outbounds)
+	outboundHTTP.RegisterOutbound(outbounds)
+	ssh.RegisterOutbound(outbounds)
+	vless.RegisterOutbound(outbounds)
+	hysteria2.RegisterOutbound(outbounds)
+	tuic.RegisterOutbound(outbounds)
 
 	dnsTransports := dns.NewTransportRegistry()
 	dnsTransport.RegisterUDP(dnsTransports)
@@ -214,6 +227,60 @@ func loadLocalUsers(path string) ([]panelapi.User, error) {
 	return panelapi.ParseUsers(data)
 }
 
+func loadRuntimeOptions(path string, tuning hy2Tuning, machineOnly bool) (*option.Options, error) {
+	if machineOnly {
+		return nil, nil
+	}
+	opts, err := loadOptionsWithHY2Tuning(path, tuning)
+	if err != nil {
+		return nil, err
+	}
+	return &opts, nil
+}
+
+func configurePanel(
+	panelURL string,
+	panelToken string,
+	panelNodeID string,
+	panelNodeType string,
+	panelHY2NodeID string,
+	panelHY2NodeType string,
+	usersPath string,
+	machineID string,
+	machineToken string,
+	machineOnly bool,
+) (panelapi.Panel, panelapi.MachineReporter, error) {
+	var panel panelapi.Panel
+	var machineReporter panelapi.MachineReporter
+	var err error
+
+	if panelURL != "" {
+		if !machineOnly {
+			primary := panelapi.NewClient(panelURL, panelToken, panelNodeID, panelNodeType)
+			if panelHY2NodeID != "" {
+				panel = panelapi.MultiPanel{Panels: []panelapi.Panel{
+					primary,
+					panelapi.NewClient(panelURL, panelToken, panelHY2NodeID, panelHY2NodeType),
+				}}
+			} else {
+				panel = primary
+			}
+		}
+		if machineID != "" {
+			machineReporter, err = buildMachineReporter(panelURL, machineID, machineToken)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		return panel, machineReporter, nil
+	}
+
+	if !machineOnly && usersPath != "" {
+		panel = panelapi.LocalUsers{Path: usersPath}
+	}
+	return panel, nil, nil
+}
+
 func collectInbounds(b *box.Box) map[string]adapter.Inbound {
 	out := make(map[string]adapter.Inbound)
 	for _, in := range b.Inbound().Inbounds() {
@@ -278,6 +345,7 @@ func main() {
 	panelHY2NodeType := flag.String("panel-hy2-node-type", "hysteria", "Panel API HY2 node type")
 	panelEvery := flag.Duration("panel-every", time.Minute, "Panel API sync interval")
 	nodeRateMbps := flag.Int("node-rate-mbps", 0, "shared node rate limit in Mbps; 0 disables")
+	machineOnly := flag.Bool("machine-only", false, "report machine status only; skip sing-box data plane startup")
 	hy2UpMbps := flag.Int("hy2-up-mbps", 0, "Hysteria2 inbound advertised upload bandwidth in Mbps; 0 keeps config value")
 	hy2DownMbps := flag.Int("hy2-down-mbps", 0, "Hysteria2 inbound advertised download bandwidth in Mbps; 0 keeps config value")
 	hy2IgnoreClientBandwidth := flag.Bool("hy2-ignore-client-bandwidth", false, "force Hysteria2 server bandwidth settings instead of client-advertised bandwidth")
@@ -295,69 +363,72 @@ func main() {
 		log.Fatal(err)
 	}
 
+	panel, machineReporter, err := configurePanel(
+		*panelURL,
+		*panelToken,
+		*panelNodeID,
+		*panelNodeType,
+		*panelHY2NodeID,
+		*panelHY2NodeType,
+		*users,
+		*machineID,
+		*machineToken,
+		*machineOnly,
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if *machineOnly && machineReporter == nil {
+		log.Fatal("machine-only mode requires --panel-url, --machine-id and --machine-token")
+	}
+
 	hy2TuningEnabled := *hy2UpMbps > 0 || *hy2DownMbps > 0 || *hy2IgnoreClientBandwidth || *hy2BrutalDebug
-	opts, err := loadOptionsWithHY2Tuning(*config, hy2Tuning{
+	runtimeOpts, err := loadRuntimeOptions(*config, hy2Tuning{
 		Enabled:               hy2TuningEnabled,
 		UpMbps:                *hy2UpMbps,
 		DownMbps:              *hy2DownMbps,
 		IgnoreClientBandwidth: *hy2IgnoreClientBandwidth,
 		BrutalDebug:           *hy2BrutalDebug,
-	})
+	}, *machineOnly)
 	if err != nil {
 		log.Fatal(err)
 	}
-	boxCtx := minimalContext(context.Background())
-	b, err := box.New(box.Options{Context: boxCtx, Options: opts})
-	if err != nil {
-		log.Fatal(err)
-	}
-	userManager := NewUserManager(*nodeRateMbps)
-	h := &Hook{users: userManager}
-	b.Router().AppendTracker(h)
 
-	if *api != "" {
-		go func() {
-			if err := serveStats(ctx, *api, h); err != nil && ctx.Err() == nil {
-				log.Println(err)
-			}
-		}()
-	}
-
-	if err := b.Start(); err != nil {
-		log.Fatal(err)
-	}
-	if *users != "" {
-		localUsers, err := loadLocalUsers(*users)
+	var b *box.Box
+	var userManager *UserManager
+	var h *Hook
+	if runtimeOpts != nil {
+		boxCtx := minimalContext(context.Background())
+		b, err = box.New(box.Options{Context: boxCtx, Options: *runtimeOpts})
 		if err != nil {
 			log.Fatal(err)
 		}
-		if err := userManager.ApplyBox(collectInbounds(b), localUsers); err != nil {
+		userManager = NewUserManager(*nodeRateMbps)
+		h = &Hook{users: userManager}
+		b.Router().AppendTracker(h)
+
+		if *api != "" {
+			go func() {
+				if err := serveStats(ctx, *api, h); err != nil && ctx.Err() == nil {
+					log.Println(err)
+				}
+			}()
+		}
+
+		if err := b.Start(); err != nil {
 			log.Fatal(err)
 		}
-	}
-
-	var panel panelapi.Panel
-	var machineReporter panelapi.MachineReporter
-	if *panelURL != "" {
-		primary := panelapi.NewClient(*panelURL, *panelToken, *panelNodeID, *panelNodeType)
-		if *panelHY2NodeID != "" {
-			panel = panelapi.MultiPanel{Panels: []panelapi.Panel{
-				primary,
-				panelapi.NewClient(*panelURL, *panelToken, *panelHY2NodeID, *panelHY2NodeType),
-			}}
-		} else {
-			panel = primary
-		}
-		if *machineID != "" {
-			machineReporter, err = buildMachineReporter(*panelURL, *machineID, *machineToken)
+		if *users != "" {
+			localUsers, err := loadLocalUsers(*users)
 			if err != nil {
 				log.Fatal(err)
 			}
+			if err := userManager.ApplyBox(collectInbounds(b), localUsers); err != nil {
+				log.Fatal(err)
+			}
 		}
-	} else if *users != "" {
-		panel = panelapi.LocalUsers{Path: *users}
 	}
-	if panel != nil {
+	if panel != nil && h != nil && userManager != nil && b != nil {
 		syncer := &panelapi.Syncer{
 			Panel:    panel,
 			Snapshot: h.SnapshotDelta,
@@ -378,7 +449,9 @@ func main() {
 	}
 
 	<-ctx.Done()
-	if err := b.Close(); err != nil {
-		log.Println(err)
+	if b != nil {
+		if err := b.Close(); err != nil {
+			log.Println(err)
+		}
 	}
 }

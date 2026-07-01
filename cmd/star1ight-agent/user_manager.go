@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 
 	"star1ight-agent/counter"
@@ -10,6 +11,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/protocol/hysteria2"
+	"github.com/sagernet/sing-box/protocol/shadowsocks"
 	"github.com/sagernet/sing-box/protocol/vless"
 )
 
@@ -76,6 +78,13 @@ func vlessUserFromPanelUser(u panelapi.User) option.VLESSUser {
 	return option.VLESSUser{Name: u.UUID, UUID: u.UUID, Flow: "xtls-rprx-vision"}
 }
 
+func shadowsocksUserFromPanelUser(u panelapi.User) option.ShadowsocksUser {
+	return option.ShadowsocksUser{
+		Name:     fmt.Sprint(u.ID),
+		Password: u.Password,
+	}
+}
+
 func (m *UserManager) ApplyBox(inbounds map[string]adapter.Inbound, users []panelapi.User) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -99,6 +108,13 @@ func (m *UserManager) ApplyBox(inbounds map[string]adapter.Inbound, users []pane
 	var addHy2 []option.Hysteria2User
 	var addHy2IDs []int
 	var delHy2 []string
+	var addSS []option.ShadowsocksUser
+	var delSS []string
+	nextIDs := make([]int, 0, len(next))
+	for id := range next {
+		nextIDs = append(nextIDs, id)
+	}
+	sort.Ints(nextIDs)
 
 	for id, old := range m.users {
 		nu, ok := next[id]
@@ -108,6 +124,7 @@ func (m *UserManager) ApplyBox(inbounds map[string]adapter.Inbound, users []pane
 			}
 			if old.Password != "" {
 				delHy2 = append(delHy2, old.Password)
+				delSS = append(delSS, fmt.Sprint(old.ID))
 			}
 			m.closeLimiterLocked(id)
 			continue
@@ -118,10 +135,12 @@ func (m *UserManager) ApplyBox(inbounds map[string]adapter.Inbound, users []pane
 			}
 			if old.Password != "" {
 				delHy2 = append(delHy2, old.Password)
+				delSS = append(delSS, fmt.Sprint(old.ID))
 			}
 		}
 	}
-	for id, nu := range next {
+	for _, id := range nextIDs {
+		nu := next[id]
 		old, ok := m.users[id]
 		if ok && sameUser(old, nu) {
 			m.updateLimiterLocked(nu)
@@ -137,6 +156,7 @@ func (m *UserManager) ApplyBox(inbounds map[string]adapter.Inbound, users []pane
 			}
 			addHy2 = append(addHy2, option.Hysteria2User{Name: name, Password: nu.Password})
 			addHy2IDs = append(addHy2IDs, nu.ID)
+			addSS = append(addSS, shadowsocksUserFromPanelUser(nu))
 		}
 		m.updateLimiterLocked(nu)
 	}
@@ -163,6 +183,17 @@ func (m *UserManager) ApplyBox(inbounds map[string]adapter.Inbound, users []pane
 			if len(addHy2) > 0 {
 				if err := in.AddUsers(addHy2, addHy2IDs); err != nil {
 					return fmt.Errorf("add hysteria2 users to %s: %w", tag, err)
+				}
+			}
+		case *shadowsocks.MultiInbound:
+			if len(delSS) > 0 {
+				if err := in.DelUsers(delSS); err != nil {
+					return fmt.Errorf("delete shadowsocks users from %s: %w", tag, err)
+				}
+			}
+			if len(addSS) > 0 {
+				if err := in.AddUsers(addSS); err != nil {
+					return fmt.Errorf("add shadowsocks users to %s: %w", tag, err)
 				}
 			}
 		}
