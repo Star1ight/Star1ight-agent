@@ -3,6 +3,7 @@ package panelapi
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,11 +14,13 @@ import (
 )
 
 type Client struct {
-	BaseURL  string
-	Token    string
-	NodeID   string
-	NodeType string
-	HTTP     *http.Client
+	BaseURL      string
+	Token        string
+	NodeID       string
+	NodeType     string
+	MachineID    string
+	MachineToken string
+	HTTP         *http.Client
 }
 
 func NewClient(baseURL, token, nodeID, nodeType string) *Client {
@@ -43,6 +46,9 @@ func (c *Client) endpoint(path string) (string, error) {
 	q := u.Query()
 	if c.Token != "" {
 		q.Set("token", c.Token)
+	}
+	if c.MachineID != "" {
+		q.Set("machine_id", c.MachineID)
 	}
 	if c.NodeID != "" {
 		q.Set("node_id", c.NodeID)
@@ -79,6 +85,18 @@ func (c *Client) FetchUsers(ctx context.Context) ([]User, error) {
 	if len(users) == 0 {
 		users = list.Data
 	}
+	if isShadowsocksNodeType(c.NodeType) {
+		cfg, err := c.FetchNodeConfig(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for i := range users {
+			users[i].Password, err = compatibleShadowsocksPassword(users[i], cfg.Cipher)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	for i := range users {
 		// Xboard's UniProxy user endpoint returns id/uuid/speed_limit only for
 		// vless-like nodes. For HY2 in this lightweight agent, use the same UUID
@@ -94,12 +112,44 @@ func (c *Client) FetchUsers(ctx context.Context) ([]User, error) {
 	return users, nil
 }
 
+func isShadowsocksNodeType(nodeType string) bool {
+	switch strings.ToLower(nodeType) {
+	case "ss", "ss2022", "shadowsocks":
+		return true
+	default:
+		return false
+	}
+}
+
+func compatibleShadowsocksPassword(u User, cipher string) (string, error) {
+	password := u.UUID
+	if password == "" {
+		password = u.Password
+	}
+	switch strings.ToLower(cipher) {
+	case "2022-blake3-aes-128-gcm":
+		if len(password) < 16 {
+			return "", fmt.Errorf("shadowsocks uuid/password too short for %s", cipher)
+		}
+		return base64.StdEncoding.EncodeToString([]byte(password[:16])), nil
+	case "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305":
+		if len(password) < 32 {
+			return "", fmt.Errorf("shadowsocks uuid/password too short for %s", cipher)
+		}
+		return base64.StdEncoding.EncodeToString([]byte(password[:32])), nil
+	default:
+		return password, nil
+	}
+}
+
 func (c *Client) matchesInbound(tag string) bool {
 	switch strings.ToLower(c.NodeType) {
 	case "vless", "vless-reality", "reality":
 		return tag == "vless-in"
 	case "hy2", "hysteria", "hysteria2":
 		return tag == "hy2-in"
+	case "ss", "ss2022", "shadowsocks":
+		return tag == "ss-in"
 	default:
 		return strings.Contains(strings.ToLower(tag), strings.ToLower(c.NodeType))
 	}
@@ -155,6 +205,65 @@ func (c *Client) PushTraffic(ctx context.Context, delta map[string]map[string][2
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		return fmt.Errorf("panel api push status %s", resp.Status)
+	}
+	return nil
+}
+
+func (c *Client) ReportMachineStatus(ctx context.Context, status MachineStatus) error {
+	token := c.MachineToken
+	if token == "" {
+		return fmt.Errorf("panel api machine token is empty")
+	}
+	payload := map[string]any{
+		"token":      token,
+		"machine_id": c.MachineID,
+		"cpu":        status.CPU,
+		"mem": map[string]uint64{
+			"total": status.Mem.Total,
+			"used":  status.Mem.Used,
+		},
+	}
+	if status.Swap.Total > 0 || status.Swap.Used > 0 {
+		payload["swap"] = map[string]uint64{
+			"total": status.Swap.Total,
+			"used":  status.Swap.Used,
+		}
+	}
+	if status.Disk.Total > 0 || status.Disk.Used > 0 {
+		payload["disk"] = map[string]uint64{
+			"total": status.Disk.Total,
+			"used":  status.Disk.Used,
+		}
+	}
+	if status.Net != nil {
+		payload["net"] = map[string]float64{
+			"in_speed":  status.Net.InSpeed,
+			"out_speed": status.Net.OutSpeed,
+		}
+	}
+	if status.Traffic != nil {
+		payload["traffic"] = map[string]uint64{
+			"up":   status.Traffic.Up,
+			"down": status.Traffic.Down,
+		}
+	}
+
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(payload); err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/v2/server/machine/status", &body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("panel api machine status %s", resp.Status)
 	}
 	return nil
 }
