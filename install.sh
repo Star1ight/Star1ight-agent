@@ -17,6 +17,7 @@ MACHINE_EVERY="60s"
 PANEL_EVERY="60s"
 NODE_RATE_MBPS="0"
 SOURCE_BUCKETS=""
+SOURCE_SERVER_MAP=""
 HY2_UP_MBPS="0"
 HY2_DOWN_MBPS="0"
 HY2_IGNORE_CLIENT_BANDWIDTH="0"
@@ -81,7 +82,7 @@ star1ight-agent one-click installer
 参数：
   --panel-url URL                  Xboard/面板地址，例如 https://board.example.com
   --panel-token TOKEN              面板节点 token
-  --node-mode MODE                 节点模式：vless、hy2、both
+  --node-mode MODE                 节点模式：vless、hy2、ss、both
   --panel-node-id ID               兼容旧参数；单节点模式下等同对应节点 ID
   --vless-node-id ID               VLESS Reality 节点 ID
   --hy2-node-id ID                 HY2 节点 ID
@@ -95,6 +96,7 @@ star1ight-agent one-click installer
 
   --node-rate-mbps N               整节点共享限速；0 关闭
   --source-buckets SPEC            可选：来源分桶，例如 'cnix=103.96.140.122/32;nbix=87.86.87.36/32'
+  --source-server-map SPEC         可选：来源桶到 XBoard 节点 ID，例如 'cnix=51,nbix=52'；需配合 --source-buckets
   --gomemlimit VALUE               默认 40MiB；极小内存可用 36MiB
   --gogc N                         默认 70；极小内存可用 60
   --gomaxprocs N                   默认 1
@@ -256,6 +258,7 @@ while [ "$#" -gt 0 ]; do
     --hy2-ignore-client-bandwidth) HY2_IGNORE_CLIENT_BANDWIDTH="1"; shift ;;
     --node-rate-mbps) NODE_RATE_MBPS="${2:-}"; shift 2 ;;
     --source-buckets) SOURCE_BUCKETS="${2:-}"; shift 2 ;;
+    --source-server-map) SOURCE_SERVER_MAP="${2:-}"; shift 2 ;;
     --gomemlimit) GOMEMLIMIT="${2:-}"; shift 2 ;;
     --gogc) GOGC="${2:-}"; shift 2 ;;
     --gomaxprocs) GOMAXPROCS="${2:-}"; shift 2 ;;
@@ -279,11 +282,13 @@ fi
 [ -n "$PANEL_URL" ] || err "缺少 --panel-url；可直接运行 sh install.sh 进入交互式安装"
 [ -n "$PANEL_TOKEN" ] || err "缺少 --panel-token；可直接运行 sh install.sh 进入交互式安装"
 [ -z "$MACHINE_ID" ] || [ -n "$MACHINE_TOKEN" ] || err "指定了 --machine-id 时必须同时提供 --machine-token"
+[ -z "$SOURCE_SERVER_MAP" ] || [ -n "$SOURCE_BUCKETS" ] || err "--source-server-map 需要同时指定 --source-buckets"
 case "$NODE_MODE" in
   vless|VLESS|reality|Reality) NODE_MODE="vless" ;;
   hy2|HY2|hysteria|hysteria2) NODE_MODE="hy2" ;;
+  ss|SS|shadowsocks|Shadowsocks|ss2022|SS2022) NODE_MODE="ss" ;;
   both|BOTH|all|dual) NODE_MODE="both" ;;
-  *) err "--node-mode 只能是 vless、hy2、both" ;;
+  *) err "--node-mode 只能是 vless、hy2、ss、both" ;;
 esac
 case "$NODE_MODE" in
   vless)
@@ -298,6 +303,10 @@ case "$NODE_MODE" in
     PANEL_NODE_TYPE="hysteria"
     [ -n "$PANEL_NODE_ID" ] || err "缺少 --hy2-node-id 或 --panel-node-id"
     ;;
+  ss)
+    [ -n "$PANEL_NODE_ID" ] || err "ss 模式缺少 --panel-node-id"
+    PANEL_NODE_TYPE="shadowsocks"
+    ;;
   both)
     [ -n "$VLESS_NODE_ID" ] || VLESS_NODE_ID="$PANEL_NODE_ID"
     PANEL_NODE_ID="$VLESS_NODE_ID"
@@ -310,7 +319,14 @@ esac
 if [ -n "$CONFIG_FILE" ] && [ -n "$CONFIG_URL" ]; then
   err "--config-file 和 --config-url 只能二选一"
 fi
-case "$PANEL_NODE_TYPE" in vless|hysteria|hysteria2) ;; *) err "--panel-node-type 只能是 vless、hysteria2、hysteria" ;; esac
+case "$PANEL_NODE_TYPE" in
+  vless|hysteria|hysteria2|ss|ss2022|shadowsocks) ;;
+  *) err "--panel-node-type 只能是 vless、hysteria2、hysteria、shadowsocks、ss、ss2022" ;;
+esac
+case "$PANEL_NODE_TYPE" in
+  hysteria2) PANEL_NODE_TYPE="hysteria" ;;
+  ss|ss2022) PANEL_NODE_TYPE="shadowsocks" ;;
+esac
 
 ARCH="$(uname -m)"
 case "$ARCH" in
@@ -423,6 +439,7 @@ MACHINE_EVERY=$(shell_quote "$MACHINE_EVERY")
 PANEL_EVERY=$(shell_quote "$PANEL_EVERY")
 NODE_RATE_MBPS=$(shell_quote "$NODE_RATE_MBPS")
 SOURCE_BUCKETS=$(shell_quote "$SOURCE_BUCKETS")
+SOURCE_SERVER_MAP=$(shell_quote "$SOURCE_SERVER_MAP")
 HY2_UP_MBPS=$(shell_quote "$HY2_UP_MBPS")
 HY2_DOWN_MBPS=$(shell_quote "$HY2_DOWN_MBPS")
 HY2_IGNORE_CLIENT_BANDWIDTH=$(shell_quote "$HY2_IGNORE_CLIENT_BANDWIDTH")
@@ -448,6 +465,8 @@ if [ "${NODE_MODE:-vless}" = "vless" ]; then
   set -- "$@" --vless-node-id "$VLESS_NODE_ID"
 elif [ "${NODE_MODE:-vless}" = "hy2" ]; then
   set -- "$@" --hy2-node-id "$HY2_NODE_ID"
+elif [ "${NODE_MODE:-vless}" = "ss" ]; then
+  set -- "$@" --panel-node-id "$PANEL_NODE_ID"
 else
   set -- "$@" --vless-node-id "$VLESS_NODE_ID" --hy2-node-id "$HY2_NODE_ID"
 fi
@@ -478,6 +497,9 @@ set -- \
   -node-rate-mbps "$NODE_RATE_MBPS"
 if [ -n "${SOURCE_BUCKETS:-}" ]; then
   set -- "$@" -source-buckets "$SOURCE_BUCKETS"
+fi
+if [ -n "${SOURCE_SERVER_MAP:-}" ]; then
+  set -- "$@" -source-server-map "$SOURCE_SERVER_MAP"
 fi
 if [ "${NODE_MODE:-vless}" = "both" ]; then
   set -- "$@" -panel-hy2-node-id "$HY2_NODE_ID" -panel-hy2-node-type hysteria
@@ -512,6 +534,7 @@ machine_id=$MACHINE_ID
 machine_token=$MACHINE_TOKEN
 machine_every=$MACHINE_EVERY
 source_buckets=$SOURCE_BUCKETS
+source_server_map=$SOURCE_SERVER_MAP
 protocol=$PROTOCOL
 EOF
 chmod 0600 "$INSTALL_DIR/install.meta"

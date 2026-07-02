@@ -45,9 +45,11 @@ import (
 )
 
 type Hook struct {
-	byInbound      sync.Map
-	users          *UserManager
-	sessionTracker *SessionTracker
+	byInbound        sync.Map
+	users            *UserManager
+	sessionTracker   *SessionTracker
+	sourceClassifier *SourceClassifier
+	sourceTraffic    bool
 }
 
 func (h *Hook) ResolveUser(user string) string {
@@ -72,10 +74,12 @@ func (h *Hook) RoutedConnection(ctx context.Context, conn net.Conn, m adapter.In
 	if m.User == "" {
 		return conn
 	}
-	release := h.trackSession(m, conn.RemoteAddr())
+	source := h.sourceFromContext(m, conn.RemoteAddr())
+	inboundTag := h.sourceInboundTag(m.Inbound, source)
+	release := h.trackSession(m, source)
 	conn = &trackedConn{Conn: conn, release: release}
 	nodeRead, nodeWrite, userRead, userWrite := h.directionalLimiters(m.User)
-	conn = counter.NewConnCounter(conn, h.tc(m.Inbound).GetCounter(h.ResolveUser(m.User)))
+	conn = counter.NewConnCounter(conn, h.tc(inboundTag).GetCounter(h.ResolveUser(m.User)))
 	conn = counter.NewRateLimitedConn(conn, nodeRead, nodeWrite)
 	conn = counter.NewRateLimitedConn(conn, userRead, userWrite)
 	return conn
@@ -84,10 +88,12 @@ func (h *Hook) RoutedPacketConnection(ctx context.Context, conn N.PacketConn, m 
 	if m.User == "" {
 		return conn
 	}
-	release := h.trackSession(m, nil)
+	source := h.sourceFromContext(m, nil)
+	inboundTag := h.sourceInboundTag(m.Inbound, source)
+	release := h.trackSession(m, source)
 	conn = &trackedPacketConn{PacketConn: conn, release: release}
 	nodeRead, nodeWrite, userRead, userWrite := h.directionalLimiters(m.User)
-	conn = counter.NewPacketConnCounter(conn, h.tc(m.Inbound).GetCounter(h.ResolveUser(m.User)))
+	conn = counter.NewPacketConnCounter(conn, h.tc(inboundTag).GetCounter(h.ResolveUser(m.User)))
 	conn = counter.NewRateLimitedPacketConn(conn, nodeRead, nodeWrite)
 	conn = counter.NewRateLimitedPacketConn(conn, userRead, userWrite)
 	return conn
@@ -131,16 +137,46 @@ func (h *Hook) RemoveAbsent(active map[string]struct{}) {
 	})
 }
 
-func (h *Hook) trackSession(m adapter.InboundContext, fallback net.Addr) func() {
+func (h *Hook) trackSession(m adapter.InboundContext, source string) func() {
 	if h.sessionTracker == nil {
 		return func() {}
 	}
 	user := h.ResolveUser(m.User)
-	source := m.Source.String()
-	if !m.Source.IsValid() && fallback != nil {
-		source = fallback.String()
+	return h.sessionTracker.Open(h.sourceInboundTag(m.Inbound, source), user, source)
+}
+
+func (h *Hook) sourceFromContext(m adapter.InboundContext, fallback net.Addr) string {
+	if m.Source.IsValid() {
+		return m.Source.String()
 	}
-	return h.sessionTracker.Open(m.Inbound, user, source)
+	if fallback != nil {
+		return fallback.String()
+	}
+	return ""
+}
+
+func (h *Hook) sourceInboundTag(inbound, source string) string {
+	if strings.TrimSpace(inbound) == "" {
+		inbound = "default"
+	}
+	if !h.sourceTraffic || h.sourceClassifier == nil {
+		return inbound
+	}
+	label := h.sourceClassifier.Classify(source)
+	if label == "" || label == normalizePeerIP(source) {
+		return inbound
+	}
+	return inbound + "@source=" + label
+}
+
+func parseSourceBucketSpecs(spec string) []string {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return nil
+	}
+	return strings.FieldsFunc(spec, func(r rune) bool {
+		return r == ';' || r == '+'
+	})
 }
 
 func (h *Hook) AliveDelta() map[string]map[string][]string {
@@ -294,6 +330,7 @@ func configurePanel(
 	machineID string,
 	machineToken string,
 	machineOnly bool,
+	sourceServerMap map[string]string,
 ) (panelapi.Panel, panelapi.MachineReporter, error) {
 	var panel panelapi.Panel
 	var machineReporter panelapi.MachineReporter
@@ -309,6 +346,13 @@ func configurePanel(
 				}}
 			} else {
 				panel = primary
+			}
+			if len(sourceServerMap) > 0 {
+				routes := make(map[string]panelapi.Panel, len(sourceServerMap))
+				for label, nodeID := range sourceServerMap {
+					routes[label] = panelapi.NewClient(panelURL, panelToken, nodeID, panelNodeType)
+				}
+				panel = panelapi.SourceMappedPanel{Default: panel, Routes: routes}
 			}
 		}
 		if machineID != "" {
@@ -410,7 +454,8 @@ func main() {
 	hy2BrutalDebug := flag.Bool("hy2-brutal-debug", false, "enable Hysteria2 Brutal congestion debug logging")
 	debugRuntimeLog := flag.String("debug-runtime-log", "", "optional CSV path for runtime/cgroup diagnostics")
 	debugRuntimeEvery := flag.Duration("debug-runtime-every", time.Second, "runtime diagnostics sampling interval")
-	sourceBuckets := flag.String("source-buckets", "", "optional semicolon-separated source label rules, e.g. nbix=114.111.176.34/32;cnix=103.96.140.122/32")
+	sourceBuckets := flag.String("source-buckets", "", "optional source label rules separated by semicolon or plus, e.g. nbix=114.111.176.34/32+cnix=103.96.140.122/32")
+	sourceServerMapSpec := flag.String("source-server-map", "", "optional source label to XBoard node id map, e.g. cnix=51,nbix=52; requires --source-buckets")
 	flag.Parse()
 
 	runtime.GOMAXPROCS(1)
@@ -419,6 +464,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	if err := startRuntimeDebugLogger(ctx, *debugRuntimeLog, *debugRuntimeEvery); err != nil {
+		log.Fatal(err)
+	}
+	sourceServerMap, err := panelapi.ParseSourceServerMap(*sourceServerMapSpec)
+	if err != nil {
 		log.Fatal(err)
 	}
 
@@ -433,6 +482,7 @@ func main() {
 		*machineID,
 		*machineToken,
 		*machineOnly,
+		sourceServerMap,
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -459,7 +509,7 @@ func main() {
 	if runtimeOpts != nil {
 		var classifier *SourceClassifier
 		if strings.TrimSpace(*sourceBuckets) != "" {
-			classifier, err = ParseSourceBuckets(strings.Split(*sourceBuckets, ";"))
+			classifier, err = ParseSourceBuckets(parseSourceBucketSpecs(*sourceBuckets))
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -471,8 +521,10 @@ func main() {
 		}
 		userManager = NewUserManager(*nodeRateMbps)
 		h = &Hook{
-			users:          userManager,
-			sessionTracker: NewSessionTracker(classifier),
+			users:            userManager,
+			sessionTracker:   NewSessionTracker(classifier),
+			sourceClassifier: classifier,
+			sourceTraffic:    len(sourceServerMap) > 0,
 		}
 		b.Router().AppendTracker(h)
 

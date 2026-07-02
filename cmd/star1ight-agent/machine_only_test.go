@@ -38,6 +38,7 @@ func TestConfigurePanelMachineOnlyBuildsReporterWithoutNodeSync(t *testing.T) {
 		"17",
 		"machine-token",
 		true,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("configurePanel: %v", err)
@@ -66,6 +67,7 @@ func TestConfigurePanelBuildsNodeSyncClientWhenNodeIDPresent(t *testing.T) {
 		"",
 		"",
 		false,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("configurePanel: %v", err)
@@ -94,6 +96,7 @@ func TestConfigurePanelUsesLocalUsersWhenPanelURLMissing(t *testing.T) {
 		"",
 		"",
 		false,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("configurePanel: %v", err)
