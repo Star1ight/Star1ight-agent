@@ -3,14 +3,17 @@ package panelapi
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 )
 
 type syncTestPanel struct {
-	users   []User
-	fetches int
-	pushes  int
-	pushErr error
+	users       []User
+	fetches     int
+	pushes      int
+	pushErr     error
+	alivePushes int
+	aliveErr    error
 }
 
 func (p *syncTestPanel) FetchUsers(ctx context.Context) ([]User, error) {
@@ -21,6 +24,11 @@ func (p *syncTestPanel) FetchUsers(ctx context.Context) ([]User, error) {
 func (p *syncTestPanel) PushTraffic(ctx context.Context, delta map[string]map[string][2]int64) error {
 	p.pushes++
 	return p.pushErr
+}
+
+func (p *syncTestPanel) PushAlive(ctx context.Context, alive map[string]map[string][]string) error {
+	p.alivePushes++
+	return p.aliveErr
 }
 
 func TestSyncerDoesNotCommitOnPushFailure(t *testing.T) {
@@ -77,5 +85,61 @@ func TestSyncerCommitsOnlyPushedNumericDelta(t *testing.T) {
 	}
 	if committed["vless-tcp"]["1"] != [2]int64{100, 200} {
 		t.Fatalf("numeric pushed delta missing from commit: %#v", committed)
+	}
+}
+
+func TestSyncerDoesNotCommitAliveOnPushFailure(t *testing.T) {
+	panel := &syncTestPanel{aliveErr: errors.New("temporary alive outage")}
+	alive := map[string]map[string][]string{
+		"vless-in": {"1": {"198.51.100.7"}},
+	}
+	commits := 0
+	s := &Syncer{
+		Panel: panel,
+		Alive: func() map[string]map[string][]string { return alive },
+		CommitAlive: func(got map[string]map[string][]string) {
+			commits++
+		},
+	}
+
+	s.flushAlive(context.Background())
+
+	if panel.alivePushes != 1 {
+		t.Fatalf("PushAlive calls = %d, want 1", panel.alivePushes)
+	}
+	if commits != 0 {
+		t.Fatalf("CommitAlive called %d times on failed push, want 0", commits)
+	}
+}
+
+func TestSyncerCommitsAlivePayloadIncludingTombstones(t *testing.T) {
+	panel := &syncTestPanel{}
+	alive := map[string]map[string][]string{
+		"vless-in": {
+			"1": {"198.51.100.7"},
+			"2": {},
+		},
+	}
+	commits := 0
+	var committed map[string]map[string][]string
+	s := &Syncer{
+		Panel: panel,
+		Alive: func() map[string]map[string][]string { return alive },
+		CommitAlive: func(got map[string]map[string][]string) {
+			commits++
+			committed = got
+		},
+	}
+
+	s.flushAlive(context.Background())
+
+	if panel.alivePushes != 1 {
+		t.Fatalf("PushAlive calls = %d, want 1", panel.alivePushes)
+	}
+	if commits != 1 {
+		t.Fatalf("CommitAlive calls = %d, want 1", commits)
+	}
+	if !reflect.DeepEqual(committed, alive) {
+		t.Fatalf("committed alive payload = %#v, want %#v", committed, alive)
 	}
 }

@@ -44,3 +44,15 @@ func (m MultiPanel) PushTraffic(ctx context.Context, delta map[string]map[string
 	}
 	return nil
 }
+
+func (m MultiPanel) PushAlive(ctx context.Context, alive map[string]map[string][]string) error {
+	for _, panel := range m.Panels {
+		if panel == nil {
+			continue
+		}
+		if err := panel.PushAlive(ctx, alive); err != nil {
+			return fmt.Errorf("push alive to panel: %w", err)
+		}
+	}
+	return nil
+}

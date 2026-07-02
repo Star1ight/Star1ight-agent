@@ -209,6 +209,69 @@ func (c *Client) PushTraffic(ctx context.Context, delta map[string]map[string][2
 	return nil
 }
 
+func (c *Client) PushAlive(ctx context.Context, alive map[string]map[string][]string) error {
+	flat := make(map[string]map[string]struct{})
+	for tag, users := range alive {
+		if !c.matchesInbound(tag) {
+			continue
+		}
+		for user, peers := range users {
+			if !isNumericUser(user) {
+				continue
+			}
+			if _, ok := flat[user]; !ok {
+				flat[user] = make(map[string]struct{})
+			}
+			for _, peer := range peers {
+				if peer == "" {
+					continue
+				}
+				flat[user][peer] = struct{}{}
+			}
+		}
+	}
+	if len(flat) == 0 {
+		return nil
+	}
+	ep, err := c.endpoint("/api/v1/server/UniProxy/alive")
+	if err != nil {
+		return err
+	}
+	payload := make(map[int][]string, len(flat))
+	for user, peers := range flat {
+		uid, err := strconv.Atoi(user)
+		if err != nil {
+			continue
+		}
+		ips := make([]string, 0, len(peers))
+		for ip := range peers {
+			ips = append(ips, ip)
+		}
+		payload[uid] = ips
+	}
+	if len(payload) == 0 {
+		return nil
+	}
+	var body bytes.Buffer
+	if err := json.NewEncoder(&body).Encode(payload); err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep, &body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return fmt.Errorf("panel api alive status %s", resp.Status)
+	}
+	return nil
+}
+
 func (c *Client) ReportMachineStatus(ctx context.Context, status MachineStatus) error {
 	token := c.MachineToken
 	if token == "" {

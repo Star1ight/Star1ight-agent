@@ -49,9 +49,14 @@ func (l LocalUsers) PushTraffic(ctx context.Context, delta map[string]map[string
 	return nil
 }
 
+func (l LocalUsers) PushAlive(ctx context.Context, alive map[string]map[string][]string) error {
+	return nil
+}
+
 type Panel interface {
 	FetchUsers(ctx context.Context) ([]User, error)
 	PushTraffic(ctx context.Context, delta map[string]map[string][2]int64) error
+	PushAlive(ctx context.Context, alive map[string]map[string][]string) error
 }
 
 type MachineReporter interface {

@@ -7,9 +7,10 @@ import (
 )
 
 type fakePanel struct {
-	users []User
-	err   error
-	push  int
+	users     []User
+	err       error
+	push      int
+	alivePush int
 }
 
 func (f *fakePanel) FetchUsers(ctx context.Context) ([]User, error) {
@@ -21,6 +22,11 @@ func (f *fakePanel) FetchUsers(ctx context.Context) ([]User, error) {
 
 func (f *fakePanel) PushTraffic(ctx context.Context, delta map[string]map[string][2]int64) error {
 	f.push++
+	return f.err
+}
+
+func (f *fakePanel) PushAlive(ctx context.Context, alive map[string]map[string][]string) error {
+	f.alivePush++
 	return f.err
 }
 
@@ -47,6 +53,18 @@ func TestMultiPanelPushesTrafficToAllPanels(t *testing.T) {
 	}
 	if a.push != 1 || b.push != 1 {
 		t.Fatalf("push counts = %d/%d", a.push, b.push)
+	}
+}
+
+func TestMultiPanelPushesAliveToAllPanels(t *testing.T) {
+	a := &fakePanel{}
+	b := &fakePanel{}
+	panel := MultiPanel{Panels: []Panel{a, b}}
+	if err := panel.PushAlive(context.Background(), map[string]map[string][]string{"vless-in": {"1": {"198.51.100.7"}}}); err != nil {
+		t.Fatalf("PushAlive: %v", err)
+	}
+	if a.alivePush != 1 || b.alivePush != 1 {
+		t.Fatalf("alive push counts = %d/%d", a.alivePush, b.alivePush)
 	}
 }
 

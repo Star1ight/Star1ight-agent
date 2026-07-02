@@ -45,8 +45,9 @@ import (
 )
 
 type Hook struct {
-	byInbound sync.Map
-	users     *UserManager
+	byInbound      sync.Map
+	users          *UserManager
+	sessionTracker *SessionTracker
 }
 
 func (h *Hook) ResolveUser(user string) string {
@@ -71,6 +72,8 @@ func (h *Hook) RoutedConnection(ctx context.Context, conn net.Conn, m adapter.In
 	if m.User == "" {
 		return conn
 	}
+	release := h.trackSession(m, conn.RemoteAddr())
+	conn = &trackedConn{Conn: conn, release: release}
 	nodeRead, nodeWrite, userRead, userWrite := h.directionalLimiters(m.User)
 	conn = counter.NewConnCounter(conn, h.tc(m.Inbound).GetCounter(h.ResolveUser(m.User)))
 	conn = counter.NewRateLimitedConn(conn, nodeRead, nodeWrite)
@@ -81,6 +84,8 @@ func (h *Hook) RoutedPacketConnection(ctx context.Context, conn N.PacketConn, m 
 	if m.User == "" {
 		return conn
 	}
+	release := h.trackSession(m, nil)
+	conn = &trackedPacketConn{PacketConn: conn, release: release}
 	nodeRead, nodeWrite, userRead, userWrite := h.directionalLimiters(m.User)
 	conn = counter.NewPacketConnCounter(conn, h.tc(m.Inbound).GetCounter(h.ResolveUser(m.User)))
 	conn = counter.NewRateLimitedPacketConn(conn, nodeRead, nodeWrite)
@@ -124,6 +129,46 @@ func (h *Hook) RemoveAbsent(active map[string]struct{}) {
 		v.(*counter.TrafficCounter).RemoveAbsent(active)
 		return true
 	})
+}
+
+func (h *Hook) trackSession(m adapter.InboundContext, fallback net.Addr) func() {
+	if h.sessionTracker == nil {
+		return func() {}
+	}
+	user := h.ResolveUser(m.User)
+	source := m.Source.String()
+	if !m.Source.IsValid() && fallback != nil {
+		source = fallback.String()
+	}
+	return h.sessionTracker.Open(m.Inbound, user, source)
+}
+
+func (h *Hook) AliveDelta() map[string]map[string][]string {
+	if h.sessionTracker == nil {
+		return nil
+	}
+	return h.sessionTracker.AliveDelta()
+}
+
+func (h *Hook) CommitAlive(payload map[string]map[string][]string) {
+	if h.sessionTracker == nil {
+		return
+	}
+	h.sessionTracker.CommitAlive(payload)
+}
+
+func (h *Hook) DeviceSnapshot() map[string]map[string][]string {
+	if h.sessionTracker == nil {
+		return nil
+	}
+	return h.sessionTracker.DevicesSnapshot()
+}
+
+func (h *Hook) SourceSnapshot() map[string]map[string]map[string]int {
+	if h.sessionTracker == nil {
+		return nil
+	}
+	return h.sessionTracker.SourceSnapshot()
 }
 
 func minimalContext(parent context.Context) context.Context {
@@ -294,7 +339,20 @@ func serveStats(ctx context.Context, listen string, h *Hook) error {
 	mux.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
 		reset := r.URL.Query().Get("reset") == "1"
 		delta := r.URL.Query().Get("delta") == "1"
+		details := r.URL.Query().Get("details") == "1"
 		w.Header().Set("Content-Type", "application/json")
+		if details {
+			traffic := h.Snapshot(reset)
+			if delta {
+				traffic = h.SnapshotDelta()
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"traffic": traffic,
+				"devices": h.DeviceSnapshot(),
+				"sources": h.SourceSnapshot(),
+			})
+			return
+		}
 		if delta {
 			json.NewEncoder(w).Encode(h.SnapshotDelta())
 			return
@@ -352,6 +410,7 @@ func main() {
 	hy2BrutalDebug := flag.Bool("hy2-brutal-debug", false, "enable Hysteria2 Brutal congestion debug logging")
 	debugRuntimeLog := flag.String("debug-runtime-log", "", "optional CSV path for runtime/cgroup diagnostics")
 	debugRuntimeEvery := flag.Duration("debug-runtime-every", time.Second, "runtime diagnostics sampling interval")
+	sourceBuckets := flag.String("source-buckets", "", "optional semicolon-separated source label rules, e.g. nbix=114.111.176.34/32;cnix=103.96.140.122/32")
 	flag.Parse()
 
 	runtime.GOMAXPROCS(1)
@@ -398,13 +457,23 @@ func main() {
 	var userManager *UserManager
 	var h *Hook
 	if runtimeOpts != nil {
+		var classifier *SourceClassifier
+		if strings.TrimSpace(*sourceBuckets) != "" {
+			classifier, err = ParseSourceBuckets(strings.Split(*sourceBuckets, ";"))
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
 		boxCtx := minimalContext(context.Background())
 		b, err = box.New(box.Options{Context: boxCtx, Options: *runtimeOpts})
 		if err != nil {
 			log.Fatal(err)
 		}
 		userManager = NewUserManager(*nodeRateMbps)
-		h = &Hook{users: userManager}
+		h = &Hook{
+			users:          userManager,
+			sessionTracker: NewSessionTracker(classifier),
+		}
 		b.Router().AppendTracker(h)
 
 		if *api != "" {
@@ -430,9 +499,11 @@ func main() {
 	}
 	if panel != nil && h != nil && userManager != nil && b != nil {
 		syncer := &panelapi.Syncer{
-			Panel:    panel,
-			Snapshot: h.SnapshotDelta,
-			Commit:   h.CommitSnapshot,
+			Panel:       panel,
+			Snapshot:    h.SnapshotDelta,
+			Commit:      h.CommitSnapshot,
+			Alive:       h.AliveDelta,
+			CommitAlive: h.CommitAlive,
 			Users: func(list []panelapi.User) error {
 				if err := userManager.ApplyBox(collectInbounds(b), list); err != nil {
 					return err

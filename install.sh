@@ -3,7 +3,7 @@ set -eu
 
 APP="star1ight-agent"
 REPO="Star1ight/Star1ight-agent"
-VERSION="v0.1.3"
+VERSION="v0.1.4"
 INSTALL_DIR="/opt/star1ight-agent"
 RUN_DIR="/run/star1ight-agent"
 SERVICE_NAME="star1ight-agent"
@@ -16,6 +16,7 @@ MACHINE_TOKEN=""
 MACHINE_EVERY="60s"
 PANEL_EVERY="60s"
 NODE_RATE_MBPS="0"
+SOURCE_BUCKETS=""
 HY2_UP_MBPS="0"
 HY2_DOWN_MBPS="0"
 HY2_IGNORE_CLIENT_BANDWIDTH="0"
@@ -93,10 +94,11 @@ star1ight-agent one-click installer
   --config-url URL                 可选：下载 config.json，跳过面板节点配置生成
 
   --node-rate-mbps N               整节点共享限速；0 关闭
+  --source-buckets SPEC            可选：来源分桶，例如 'cnix=103.96.140.122/32;nbix=87.86.87.36/32'
   --gomemlimit VALUE               默认 40MiB；极小内存可用 36MiB
   --gogc N                         默认 70；极小内存可用 60
   --gomaxprocs N                   默认 1
-  --version TAG                    GitHub Release tag，默认 v0.1.3
+  --version TAG                    GitHub Release tag，默认 v0.1.4
   环境变量 STAR1IGHT_AGENT_BASE_URL  可覆盖下载地址，测试/内网安装用
   --force                          覆盖旧安装
   --yes                            非交互确认，配合命令行参数使用
@@ -253,6 +255,7 @@ while [ "$#" -gt 0 ]; do
     --hy2-down-mbps) HY2_DOWN_MBPS="${2:-}"; shift 2 ;;
     --hy2-ignore-client-bandwidth) HY2_IGNORE_CLIENT_BANDWIDTH="1"; shift ;;
     --node-rate-mbps) NODE_RATE_MBPS="${2:-}"; shift 2 ;;
+    --source-buckets) SOURCE_BUCKETS="${2:-}"; shift 2 ;;
     --gomemlimit) GOMEMLIMIT="${2:-}"; shift 2 ;;
     --gogc) GOGC="${2:-}"; shift 2 ;;
     --gomaxprocs) GOMAXPROCS="${2:-}"; shift 2 ;;
@@ -419,6 +422,7 @@ MACHINE_TOKEN=$(shell_quote "$MACHINE_TOKEN")
 MACHINE_EVERY=$(shell_quote "$MACHINE_EVERY")
 PANEL_EVERY=$(shell_quote "$PANEL_EVERY")
 NODE_RATE_MBPS=$(shell_quote "$NODE_RATE_MBPS")
+SOURCE_BUCKETS=$(shell_quote "$SOURCE_BUCKETS")
 HY2_UP_MBPS=$(shell_quote "$HY2_UP_MBPS")
 HY2_DOWN_MBPS=$(shell_quote "$HY2_DOWN_MBPS")
 HY2_IGNORE_CLIENT_BANDWIDTH=$(shell_quote "$HY2_IGNORE_CLIENT_BANDWIDTH")
@@ -472,6 +476,9 @@ set -- \
   -machine-every "$MACHINE_EVERY" \
   -panel-every "$PANEL_EVERY" \
   -node-rate-mbps "$NODE_RATE_MBPS"
+if [ -n "${SOURCE_BUCKETS:-}" ]; then
+  set -- "$@" -source-buckets "$SOURCE_BUCKETS"
+fi
 if [ "${NODE_MODE:-vless}" = "both" ]; then
   set -- "$@" -panel-hy2-node-id "$HY2_NODE_ID" -panel-hy2-node-type hysteria
 fi
@@ -504,6 +511,7 @@ hy2_node_id=$HY2_NODE_ID
 machine_id=$MACHINE_ID
 machine_token=$MACHINE_TOKEN
 machine_every=$MACHINE_EVERY
+source_buckets=$SOURCE_BUCKETS
 protocol=$PROTOCOL
 EOF
 chmod 0600 "$INSTALL_DIR/install.meta"
