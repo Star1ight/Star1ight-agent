@@ -368,3 +368,7 @@ func (c *trackedPacketConn) Close() error {
 	defer c.release()
 	return c.PacketConn.Close()
 }
+
+func (c *trackedPacketConn) Upstream() any {
+	return c.PacketConn
+}
