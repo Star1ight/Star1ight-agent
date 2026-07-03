@@ -3,7 +3,7 @@ set -eu
 
 APP="star1ight-agent"
 REPO="Star1ight/Star1ight-agent"
-VERSION="v0.1.5"
+VERSION="v0.1.6"
 INSTALL_DIR="/opt/star1ight-agent"
 RUN_DIR="/run/star1ight-agent"
 SERVICE_NAME="star1ight-agent"
@@ -100,7 +100,7 @@ star1ight-agent one-click installer
   --gomemlimit VALUE               默认 40MiB；极小内存可用 36MiB
   --gogc N                         默认 70；极小内存可用 60
   --gomaxprocs N                   默认 1
-  --version TAG                    GitHub Release tag，默认 v0.1.5
+  --version TAG                    GitHub Release tag，默认 v0.1.6
   环境变量 STAR1IGHT_AGENT_BASE_URL  可覆盖下载地址，测试/内网安装用
   --force                          覆盖旧安装
   --yes                            非交互确认，配合命令行参数使用
