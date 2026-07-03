@@ -32,7 +32,7 @@ func (c *recordingPacketConn) SetDeadline(time.Time) error      { return nil }
 func (c *recordingPacketConn) SetReadDeadline(time.Time) error  { return nil }
 func (c *recordingPacketConn) SetWriteDeadline(time.Time) error { return nil }
 
-func TestRateLimitedPacketConnWriteDropsWithoutSleeping(t *testing.T) {
+func TestRateLimitedPacketConnWritePassesWithoutSleeping(t *testing.T) {
 	limiter := NewRateLimiter(1) // 1 byte/sec; 64 KiB packet would sleep for hours if Wait were used.
 	conn := &recordingPacketConn{}
 	wrapped := NewRateLimitedPacketConn(conn, nil, limiter)
@@ -44,14 +44,14 @@ func TestRateLimitedPacketConnWriteDropsWithoutSleeping(t *testing.T) {
 	}
 
 	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
-		t.Fatalf("packet limiter slept instead of making a fast drop/pass decision: %s", elapsed)
+		t.Fatalf("packet limiter slept instead of making a fast pass decision: %s", elapsed)
 	}
-	if conn.written != 0 {
-		t.Fatalf("expected over-limit packet to be dropped, wrote %d packets", conn.written)
+	if conn.written != 1 {
+		t.Fatalf("expected UDP packet to pass without agent-side dropping, wrote %d packets", conn.written)
 	}
 }
 
-func TestRateLimitedPacketConnReadDropsWithoutSleeping(t *testing.T) {
+func TestRateLimitedPacketConnReadPassesWithoutSleeping(t *testing.T) {
 	limiter := NewRateLimiter(1)
 	conn := &recordingPacketConn{readBuf: buf.As(make([]byte, maxReadChunk))}
 	wrapped := NewRateLimitedPacketConn(conn, limiter, nil)
@@ -64,10 +64,10 @@ func TestRateLimitedPacketConnReadDropsWithoutSleeping(t *testing.T) {
 	}
 
 	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
-		t.Fatalf("packet read limiter slept instead of making a fast drop/pass decision: %s", elapsed)
+		t.Fatalf("packet read limiter slept instead of making a fast pass decision: %s", elapsed)
 	}
-	if packet.Len() != 0 {
-		t.Fatalf("expected over-limit packet to be dropped/reset, got %d bytes", packet.Len())
+	if packet.Len() == 0 {
+		t.Fatalf("expected UDP packet to pass without agent-side dropping, got %d bytes", packet.Len())
 	}
 }
 

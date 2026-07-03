@@ -41,6 +41,9 @@ func TestCollectRuntimeDebugSample(t *testing.T) {
 	if s.goroutines <= 0 {
 		t.Fatalf("goroutines not populated: %+v", s)
 	}
+	if _, err := os.Stat("/proc/self/status"); err != nil {
+		return
+	}
 	if s.threads <= 0 {
 		t.Fatalf("threads not populated: %+v", s)
 	}

@@ -1,18 +1,23 @@
 #!/bin/sh
 set -eu
 
-APP="mini-sb-agent"
-REPO="ashvvvvv/mini-sb-agent"
-VERSION="v0.1.2"
-INSTALL_DIR="/opt/mini-sb-agent"
-RUN_DIR="/run/mini-sb-agent"
-SERVICE_NAME="mini-sb-agent"
+APP="star1ight-agent"
+REPO="Star1ight/Star1ight-agent"
+VERSION="v0.1.7"
+INSTALL_DIR="/opt/star1ight-agent"
+RUN_DIR="/run/star1ight-agent"
+SERVICE_NAME="star1ight-agent"
 NODE_MODE="vless"
 PANEL_NODE_TYPE="vless"
 VLESS_NODE_ID=""
 HY2_NODE_ID=""
+MACHINE_ID=""
+MACHINE_TOKEN=""
+MACHINE_EVERY="60s"
 PANEL_EVERY="60s"
 NODE_RATE_MBPS="0"
+SOURCE_BUCKETS=""
+SOURCE_SERVER_MAP=""
 HY2_UP_MBPS="0"
 HY2_DOWN_MBPS="0"
 HY2_IGNORE_CLIENT_BANDWIDTH="0"
@@ -39,15 +44,15 @@ INTERACTIVE="auto"
 
 usage() {
   cat <<'EOF'
-mini-sb-agent one-click installer
+star1ight-agent one-click installer
 
 用法示例：
 
   # 交互式一键安装：选择 VLESS Reality / HY2 / 两种都装
-  curl -fsSL https://raw.githubusercontent.com/ashvvvvv/mini-sb-agent/master/install.sh | sh
+  curl -fsSL https://raw.githubusercontent.com/Star1ight/Star1ight-agent/master/install.sh | sh
 
   # 如果 curl | sh 所在终端不能交互，就先下载再运行
-  curl -fsSL https://raw.githubusercontent.com/ashvvvvv/mini-sb-agent/master/install.sh -o install.sh && sh install.sh
+  curl -fsSL https://raw.githubusercontent.com/Star1ight/Star1ight-agent/master/install.sh -o install.sh && sh install.sh
 
   # 非交互安装：只装 VLESS Reality
   sh install.sh \
@@ -77,21 +82,26 @@ mini-sb-agent one-click installer
 参数：
   --panel-url URL                  Xboard/面板地址，例如 https://board.example.com
   --panel-token TOKEN              面板节点 token
-  --node-mode MODE                 节点模式：vless、hy2、both
+  --node-mode MODE                 节点模式：vless、hy2、ss、both
   --panel-node-id ID               兼容旧参数；单节点模式下等同对应节点 ID
   --vless-node-id ID               VLESS Reality 节点 ID
   --hy2-node-id ID                 HY2 节点 ID
+  --machine-id ID                  可选：XB 服务器管理的 machine_id，仅用于上报机器状态
+  --machine-token TOKEN            可选：XB 服务器管理的 machine token；启用 machine-id 时必填
+  --machine-every DURATION         机器状态上报间隔，默认 60s
   --panel-every DURATION           默认 60s
 
   --config-file PATH               可选：使用本地 config.json，跳过面板节点配置生成
   --config-url URL                 可选：下载 config.json，跳过面板节点配置生成
 
   --node-rate-mbps N               整节点共享限速；0 关闭
+  --source-buckets SPEC            可选：来源分桶，例如 'cnix=103.96.140.122/32;nbix=87.86.87.36/32'
+  --source-server-map SPEC         可选：来源桶到 XBoard 节点 ID，例如 'cnix=51,nbix=52'；需配合 --source-buckets
   --gomemlimit VALUE               默认 40MiB；极小内存可用 36MiB
   --gogc N                         默认 70；极小内存可用 60
   --gomaxprocs N                   默认 1
-  --version TAG                    GitHub Release tag，默认 v0.1.2
-  环境变量 MINI_SB_BASE_URL         可覆盖下载地址，测试/内网安装用
+  --version TAG                    GitHub Release tag，默认 v0.1.7
+  环境变量 STAR1IGHT_AGENT_BASE_URL  可覆盖下载地址，测试/内网安装用
   --force                          覆盖旧安装
   --yes                            非交互确认，配合命令行参数使用
   --interactive                    强制进入问答式安装
@@ -100,9 +110,9 @@ mini-sb-agent one-click installer
   -h, --help                       显示帮助
 
 安装后只保留：
-  /opt/mini-sb-agent/              程序、env、自动生成的 config.json、证书、卸载脚本、安装记录
-  /etc/systemd/system/mini-sb-agent.service 或 /etc/init.d/mini-sb-agent
-  /run/mini-sb-agent/              运行时 pid/socket，停止或卸载后清理
+  /opt/star1ight-agent/              程序、env、自动生成的 config.json、证书、卸载脚本、安装记录
+  /etc/systemd/system/star1ight-agent.service 或 /etc/init.d/star1ight-agent
+  /run/star1ight-agent/              运行时 pid/socket，停止或卸载后清理
 EOF
 }
 err() { echo "ERROR: $*" >&2; exit 1; }
@@ -228,6 +238,9 @@ while [ "$#" -gt 0 ]; do
     --node-mode) NODE_MODE="${2:-}"; shift 2 ;;
     --vless-node-id) VLESS_NODE_ID="${2:-}"; shift 2 ;;
     --hy2-node-id) HY2_NODE_ID="${2:-}"; shift 2 ;;
+    --machine-id) MACHINE_ID="${2:-}"; shift 2 ;;
+    --machine-token) MACHINE_TOKEN="${2:-}"; shift 2 ;;
+    --machine-every) MACHINE_EVERY="${2:-}"; shift 2 ;;
     --panel-node-type) PANEL_NODE_TYPE="${2:-}"; shift 2 ;;
     --panel-every) PANEL_EVERY="${2:-}"; shift 2 ;;
     --config-file) CONFIG_FILE="${2:-}"; shift 2 ;;
@@ -244,6 +257,8 @@ while [ "$#" -gt 0 ]; do
     --hy2-down-mbps) HY2_DOWN_MBPS="${2:-}"; shift 2 ;;
     --hy2-ignore-client-bandwidth) HY2_IGNORE_CLIENT_BANDWIDTH="1"; shift ;;
     --node-rate-mbps) NODE_RATE_MBPS="${2:-}"; shift 2 ;;
+    --source-buckets) SOURCE_BUCKETS="${2:-}"; shift 2 ;;
+    --source-server-map) SOURCE_SERVER_MAP="${2:-}"; shift 2 ;;
     --gomemlimit) GOMEMLIMIT="${2:-}"; shift 2 ;;
     --gogc) GOGC="${2:-}"; shift 2 ;;
     --gomaxprocs) GOMAXPROCS="${2:-}"; shift 2 ;;
@@ -266,11 +281,14 @@ fi
 
 [ -n "$PANEL_URL" ] || err "缺少 --panel-url；可直接运行 sh install.sh 进入交互式安装"
 [ -n "$PANEL_TOKEN" ] || err "缺少 --panel-token；可直接运行 sh install.sh 进入交互式安装"
+[ -z "$MACHINE_ID" ] || [ -n "$MACHINE_TOKEN" ] || err "指定了 --machine-id 时必须同时提供 --machine-token"
+[ -z "$SOURCE_SERVER_MAP" ] || [ -n "$SOURCE_BUCKETS" ] || err "--source-server-map 需要同时指定 --source-buckets"
 case "$NODE_MODE" in
   vless|VLESS|reality|Reality) NODE_MODE="vless" ;;
   hy2|HY2|hysteria|hysteria2) NODE_MODE="hy2" ;;
+  ss|SS|shadowsocks|Shadowsocks|ss2022|SS2022) NODE_MODE="ss" ;;
   both|BOTH|all|dual) NODE_MODE="both" ;;
-  *) err "--node-mode 只能是 vless、hy2、both" ;;
+  *) err "--node-mode 只能是 vless、hy2、ss、both" ;;
 esac
 case "$NODE_MODE" in
   vless)
@@ -285,6 +303,10 @@ case "$NODE_MODE" in
     PANEL_NODE_TYPE="hysteria"
     [ -n "$PANEL_NODE_ID" ] || err "缺少 --hy2-node-id 或 --panel-node-id"
     ;;
+  ss)
+    [ -n "$PANEL_NODE_ID" ] || err "ss 模式缺少 --panel-node-id"
+    PANEL_NODE_TYPE="shadowsocks"
+    ;;
   both)
     [ -n "$VLESS_NODE_ID" ] || VLESS_NODE_ID="$PANEL_NODE_ID"
     PANEL_NODE_ID="$VLESS_NODE_ID"
@@ -297,7 +319,14 @@ esac
 if [ -n "$CONFIG_FILE" ] && [ -n "$CONFIG_URL" ]; then
   err "--config-file 和 --config-url 只能二选一"
 fi
-case "$PANEL_NODE_TYPE" in vless|hysteria|hysteria2) ;; *) err "--panel-node-type 只能是 vless、hysteria2、hysteria" ;; esac
+case "$PANEL_NODE_TYPE" in
+  vless|hysteria|hysteria2|ss|ss2022|shadowsocks) ;;
+  *) err "--panel-node-type 只能是 vless、hysteria2、hysteria、shadowsocks、ss、ss2022" ;;
+esac
+case "$PANEL_NODE_TYPE" in
+  hysteria2) PANEL_NODE_TYPE="hysteria" ;;
+  ss|ss2022) PANEL_NODE_TYPE="shadowsocks" ;;
+esac
 
 ARCH="$(uname -m)"
 case "$ARCH" in
@@ -305,9 +334,9 @@ case "$ARCH" in
   aarch64|arm64) ASSET_ARCH="arm64" ;;
   *) err "不支持的架构：$ARCH" ;;
 esac
-ASSET="mini-sb-agent-linux-$ASSET_ARCH"
-BASE_URL="${MINI_SB_BASE_URL:-https://github.com/$REPO/releases/download/$VERSION}"
-TMPDIR="$(mktemp -d /tmp/mini-sb-install.XXXXXX)"
+ASSET="star1ight-agent-linux-$ASSET_ARCH"
+BASE_URL="${STAR1IGHT_AGENT_BASE_URL:-https://github.com/$REPO/releases/download/$VERSION}"
+TMPDIR="$(mktemp -d /tmp/star1ight-agent-install.XXXXXX)"
 cleanup() { rm -rf "$TMPDIR"; }
 trap cleanup EXIT HUP INT TERM
 
@@ -379,7 +408,7 @@ if [ -x "$INSTALL_DIR/$APP" ]; then
   pkill -f "$INSTALL_DIR/$APP" 2>/dev/null || true
 fi
 rm -rf "$INSTALL_DIR" "$RUN_DIR"
-rm -f /tmp/mini-sb-agent.sock
+rm -f /tmp/star1ight-agent.sock
 
 info "安装到 $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR" "$RUN_DIR"
@@ -392,7 +421,7 @@ elif [ -n "$CONFIG_URL" ]; then
   fetch "$CONFIG_URL" "$INSTALL_DIR/config.json"
   chmod 0600 "$INSTALL_DIR/config.json"
 else
-  # config.json is generated just before mini-sb-agent starts. The generator
+  # config.json is generated just before star1ight-agent starts. The generator
   # exits immediately, so it adds no runtime process or resident memory.
   rm -f "$INSTALL_DIR/config.json"
 fi
@@ -404,8 +433,13 @@ PANEL_NODE_ID=$(shell_quote "$PANEL_NODE_ID")
 PANEL_NODE_TYPE=$(shell_quote "$PANEL_NODE_TYPE")
 VLESS_NODE_ID=$(shell_quote "$VLESS_NODE_ID")
 HY2_NODE_ID=$(shell_quote "$HY2_NODE_ID")
+MACHINE_ID=$(shell_quote "$MACHINE_ID")
+MACHINE_TOKEN=$(shell_quote "$MACHINE_TOKEN")
+MACHINE_EVERY=$(shell_quote "$MACHINE_EVERY")
 PANEL_EVERY=$(shell_quote "$PANEL_EVERY")
 NODE_RATE_MBPS=$(shell_quote "$NODE_RATE_MBPS")
+SOURCE_BUCKETS=$(shell_quote "$SOURCE_BUCKETS")
+SOURCE_SERVER_MAP=$(shell_quote "$SOURCE_SERVER_MAP")
 HY2_UP_MBPS=$(shell_quote "$HY2_UP_MBPS")
 HY2_DOWN_MBPS=$(shell_quote "$HY2_DOWN_MBPS")
 HY2_IGNORE_CLIENT_BANDWIDTH=$(shell_quote "$HY2_IGNORE_CLIENT_BANDWIDTH")
@@ -418,9 +452,9 @@ chmod 0600 "$INSTALL_DIR/env"
 cat > "$INSTALL_DIR/generate-config.sh" <<'EOF'
 #!/bin/sh
 set -eu
-APP="/opt/mini-sb-agent/mini-sb-agent"
-CONFIG="/opt/mini-sb-agent/config.json"
-. /opt/mini-sb-agent/env
+APP="/opt/star1ight-agent/star1ight-agent"
+CONFIG="/opt/star1ight-agent/config.json"
+. /opt/star1ight-agent/env
 [ -s "$CONFIG" ] && exit 0
 set -- xboard-generate-config \
   --panel-url "$PANEL_URL" \
@@ -431,6 +465,8 @@ if [ "${NODE_MODE:-vless}" = "vless" ]; then
   set -- "$@" --vless-node-id "$VLESS_NODE_ID"
 elif [ "${NODE_MODE:-vless}" = "hy2" ]; then
   set -- "$@" --hy2-node-id "$HY2_NODE_ID"
+elif [ "${NODE_MODE:-vless}" = "ss" ]; then
+  set -- "$@" --panel-node-id "$PANEL_NODE_ID"
 else
   set -- "$@" --vless-node-id "$VLESS_NODE_ID" --hy2-node-id "$HY2_NODE_ID"
 fi
@@ -441,10 +477,10 @@ chmod 0755 "$INSTALL_DIR/generate-config.sh"
 cat > "$INSTALL_DIR/run.sh" <<'EOF'
 #!/bin/sh
 set -eu
-APP="/opt/mini-sb-agent/mini-sb-agent"
-CONFIG="/opt/mini-sb-agent/config.json"
-API="unix:/run/mini-sb-agent/stats.sock"
-. /opt/mini-sb-agent/env
+APP="/opt/star1ight-agent/star1ight-agent"
+CONFIG="/opt/star1ight-agent/config.json"
+API="unix:/run/star1ight-agent/stats.sock"
+. /opt/star1ight-agent/env
 export GOMAXPROCS GOMEMLIMIT GOGC
 SYNC_NODE_TYPE="$PANEL_NODE_TYPE"
 set -- \
@@ -454,8 +490,17 @@ set -- \
   -panel-token "$PANEL_TOKEN" \
   -panel-node-id "$PANEL_NODE_ID" \
   -panel-node-type "$SYNC_NODE_TYPE" \
+  -machine-id "$MACHINE_ID" \
+  -machine-token "$MACHINE_TOKEN" \
+  -machine-every "$MACHINE_EVERY" \
   -panel-every "$PANEL_EVERY" \
   -node-rate-mbps "$NODE_RATE_MBPS"
+if [ -n "${SOURCE_BUCKETS:-}" ]; then
+  set -- "$@" -source-buckets "$SOURCE_BUCKETS"
+fi
+if [ -n "${SOURCE_SERVER_MAP:-}" ]; then
+  set -- "$@" -source-server-map "$SOURCE_SERVER_MAP"
+fi
 if [ "${NODE_MODE:-vless}" = "both" ]; then
   set -- "$@" -panel-hy2-node-id "$HY2_NODE_ID" -panel-hy2-node-type hysteria
 fi
@@ -485,6 +530,11 @@ panel_node_id=$PANEL_NODE_ID
 panel_node_type=$PANEL_NODE_TYPE
 vless_node_id=$VLESS_NODE_ID
 hy2_node_id=$HY2_NODE_ID
+machine_id=$MACHINE_ID
+machine_token=$MACHINE_TOKEN
+machine_every=$MACHINE_EVERY
+source_buckets=$SOURCE_BUCKETS
+source_server_map=$SOURCE_SERVER_MAP
 protocol=$PROTOCOL
 EOF
 chmod 0600 "$INSTALL_DIR/install.meta"
@@ -492,10 +542,10 @@ chmod 0600 "$INSTALL_DIR/install.meta"
 cat > "$INSTALL_DIR/uninstall.sh" <<'EOF'
 #!/bin/sh
 set -eu
-APP="mini-sb-agent"
-INSTALL_DIR="/opt/mini-sb-agent"
-RUN_DIR="/run/mini-sb-agent"
-SERVICE_NAME="mini-sb-agent"
+APP="star1ight-agent"
+INSTALL_DIR="/opt/star1ight-agent"
+RUN_DIR="/run/star1ight-agent"
+SERVICE_NAME="star1ight-agent"
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
   systemctl stop "$SERVICE_NAME" 2>/dev/null || true
   systemctl disable "$SERVICE_NAME" 2>/dev/null || true
@@ -511,8 +561,8 @@ if [ -x "$INSTALL_DIR/$APP" ]; then
   pkill -f "$INSTALL_DIR/$APP" 2>/dev/null || true
 fi
 rm -rf "$INSTALL_DIR" "$RUN_DIR"
-rm -f /tmp/mini-sb-agent.sock
-printf '%s\n' "mini-sb-agent 已卸载，仅移除了本安装器创建的文件。"
+rm -f /tmp/star1ight-agent.sock
+printf '%s\n' "star1ight-agent 已卸载，仅移除了本安装器创建的文件。"
 EOF
 chmod 0755 "$INSTALL_DIR/uninstall.sh"
 
@@ -520,7 +570,7 @@ if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
   info "写入 systemd 服务"
   cat > "/etc/systemd/system/$SERVICE_NAME.service" <<EOF
 [Unit]
-Description=mini-sb-agent
+Description=star1ight-agent
 After=network-online.target
 Wants=network-online.target
 
@@ -529,9 +579,9 @@ Type=simple
 Environment=GOMAXPROCS=$GOMAXPROCS
 Environment=GOMEMLIMIT=$GOMEMLIMIT
 Environment=GOGC=$GOGC
-RuntimeDirectory=mini-sb-agent
-ExecStartPre=/opt/mini-sb-agent/generate-config.sh
-ExecStart=/opt/mini-sb-agent/run.sh
+RuntimeDirectory=star1ight-agent
+ExecStartPre=/opt/star1ight-agent/generate-config.sh
+ExecStart=/opt/star1ight-agent/run.sh
 Restart=always
 RestartSec=3
 LimitNOFILE=1048576
@@ -550,21 +600,21 @@ EOF
 elif command -v rc-service >/dev/null 2>&1; then
   info "写入 OpenRC 服务"
   cat > "/etc/conf.d/$SERVICE_NAME" <<EOF
-# Runtime options live in /opt/mini-sb-agent/env and are read by run.sh.
+# Runtime options live in /opt/star1ight-agent/env and are read by run.sh.
 EOF
   chmod 0600 "/etc/conf.d/$SERVICE_NAME"
   cat > "/etc/init.d/$SERVICE_NAME" <<'EOF'
 #!/sbin/openrc-run
-name="mini-sb-agent"
-description="mini-sb-agent"
-command="/opt/mini-sb-agent/run.sh"
+name="star1ight-agent"
+description="star1ight-agent"
+command="/opt/star1ight-agent/run.sh"
 command_background="yes"
-pidfile="/run/mini-sb-agent/mini-sb-agent.pid"
-output_log="/var/log/mini-sb-agent.log"
-error_log="/var/log/mini-sb-agent.err"
+pidfile="/run/star1ight-agent/star1ight-agent.pid"
+output_log="/var/log/star1ight-agent.log"
+error_log="/var/log/star1ight-agent.err"
 start_pre() {
-  checkpath -d -m 0755 /run/mini-sb-agent
-  /opt/mini-sb-agent/generate-config.sh
+  checkpath -d -m 0755 /run/star1ight-agent
+  /opt/star1ight-agent/generate-config.sh
 }
 EOF
   chmod 0755 "/etc/init.d/$SERVICE_NAME"
@@ -583,11 +633,10 @@ else
 fi
 
 info "验证安装残留"
-leftovers="$(find /tmp -maxdepth 1 -name 'mini-sb-install.*' -print 2>/dev/null | grep -v "$TMPDIR" || true)"
+leftovers="$(find /tmp -maxdepth 1 -name 'star1ight-agent-install.*' -print 2>/dev/null | grep -v "$TMPDIR" || true)"
 [ -z "$leftovers" ] || printf '%s\n' "$leftovers"
 
 info "完成"
 echo "安装目录：$INSTALL_DIR"
 echo "卸载命令：$INSTALL_DIR/uninstall.sh"
 echo "状态接口：curl --unix-socket $RUN_DIR/stats.sock http://x/stats"
-

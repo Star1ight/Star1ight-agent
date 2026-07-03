@@ -1,6 +1,6 @@
-# mini-sb-agent
+# Star1ight agent
 
-`mini-sb-agent` 是一个轻量级 `sing-box` 内核的节点管理客户端，适用于内存受限的 NAT / 小内存 VPS（alpine debian均支持），支持通过 Xboard 面板实现多节点与多用户的管理、一键导入 Clash 等代理应用程序。
+`Star1ight agent` 是一个轻量级 `sing-box` 内核的节点管理客户端，适用于内存受限的 NAT / 小内存 VPS（alpine debian均支持），支持通过 Xboard 面板实现多节点与多用户的管理、一键导入 Clash 等代理应用程序。
 
 > **免责声明**：本项目基于官方 `sing-box` 精简改良。本项目不对任何安全性与可靠性负责，使用本项目即表示您默认同意此条款。
 
@@ -13,27 +13,29 @@
 2. **GC参数不合理**：默认参数不适合小内存nat机
 3. **高并发测速引发 OOM**：在进行多线程测速或大并发流量吞吐时，TCP 缓冲区（Socket Buffer）膨胀，代理程序与 TCP 缓冲区共同作用，导致进程被内核 OOM Killer 强杀。
 
-`mini-sb-agent` 针对上述痛点进行了精简与优化，主要压缩代理程序内存占用：
+`Star1ight agent` 针对上述痛点进行了精简与优化，主要压缩代理程序内存占用：
 
-* **精简协议栈**：编译期剔除 VMess、Trojan、Shadowsocks 等协议，仅保留 Hysteria 2 与 VLESS Reality。
-* **单进程低开销**：Hysteria 2 与 VLESS 运行于同一个进程内，常态空载物理内存（RSS）仅约 **16MB**。
+* **精简协议栈**：编译期剔除 VMess、Trojan 与默认 TUN 等非现网必需模块，保留 VLESS Reality、Hysteria 2、Shadowsocks 与 Shadowsocks 2022。
+* **单进程低开销**：VLESS Reality、Hysteria 2 与 Shadowsocks 可运行于同一个进程内，常态空载物理内存（RSS）仍保持小内存 NAT 机器可接受范围。
 * **无用依赖削减**：删除精简了无用依赖库，使用二进制编译，以最大程度压缩内存占用。
-* **自动 GC 限制**：默认设置 `GOMEMLIMIT=40MiB`、`GOGC=70`、限制 `GOMAXPROCS=1`，防止 Go 虚拟机激进申请内存 （刚好匹配mini-sb-agent的参数）。
+* **自动 GC 限制**：默认设置 `GOMEMLIMIT=40MiB`、`GOGC=70`、限制 `GOMAXPROCS=1`，防止 Go 虚拟机激进申请内存 （刚好匹配Star1ight agent的参数）。
 
 ---
 
 ## 核心与高级功能介绍
 
 * **超低内存占用,空载仅14-16m(约等于v2bx的1/3)**
-* **轻量级双协议**：提供基础 VLESS Reality (`xtls-rprx-vision` 流控) 与 Hysteria 2 支持。
+* **轻量级多协议**：提供 VLESS Reality (`xtls-rprx-vision` 流控)、Hysteria 2、Shadowsocks 与 Shadowsocks 2022 支持。
 * **流量统计**：支持单个用户流量统计与节点总体流量统计。
+* **在线设备回传**：支持按用户回传在线来源 IP 到 XBoard `/api/v1/server/UniProxy/alive`，便于面板侧显示用户在线设备数。
+* **来源分桶观测**：支持 `-source-buckets` 参数，把中转来源 IP 归类为 `cnix`、`nbix` 等标签，便于排查同一落地口从不同中转来的连接。
 * **用户限速**：支持单个用户精准限速。
 * **跨协议节点级总体限速**：支持 `-node-rate-mbps` 参数。该参数设置一个**全局共享的上传/下载 Token 桶**。不论是 **VLESS Reality** 还是 **Hysteria 2**，所有进出本节点的连接将**共享并竞争此节点限速额度**。当多协议用户并发跑满该节点带宽时，它们会自动在此限速器中排队，不会突破该机器的总限速。
 * **用户名单热更新**：默认每 60 秒异步轮询面板更新用户及限速，无需重启进程，实现无感热变更。
 * **防 ACK 饥饿的双向限速**：限速器的上传与下载通道采用完全独立的 Token 桶（令牌桶）隔离。这能防止单方向的测速或高速下载榨干 ACK 控制报文，确保极限下载负载下上传响应依旧顺畅。
 * **双协议合并同步**：支持 `-panel-hy2-node-id` 参数。可在同一个客户端进程内同时对接 Xboard 的 VLESS 节点和 Hysteria 2 节点，合并拉取用户数据，完美实现双节点单进程部署。
 * **本地静态回滚机制**：支持 `-users` 参数传入本地 JSON 用户映射文件。在面板宕机或离线环境下，能够自动退避至本地用户库进行限速与认证。
-* **本地监控 API**：内置极简轻量级服务接口（支持 Unix Domain Socket 和 TCP），通过访问 `/stats?delta=1` 或 `/stats?reset=1` 可以高效率提取流量增量与监控快照。
+* **本地监控 API**：内置极简轻量级服务接口（支持 Unix Domain Socket 和 TCP），通过访问 `/stats?delta=1` 或 `/stats?reset=1` 可以高效率提取流量增量与监控快照；访问 `/stats?details=1` 可同时查看流量、在线设备与来源分桶。
 * **自动证书管理**：Hysteria 2 默认生成并使用自签名证书（需在面板端开启“允许不安全”）。
 * **TUN 模块可选**：默认不注册 TUN 虚拟网卡，可根据需要在编译/安装阶段手动开启。
 
@@ -45,7 +47,7 @@
 如果您需要激活 TUN 虚拟网卡接口以接管主机的全局 network 路由（透明网关配置），必须在编译时加入 `tun` 编译标签(默认一键安装脚本中使用的是已编译不带tun版本)：
 
 ```bash
-go build -tags tun -o mini-sb-agent ./cmd/mini-sb-agent
+go build -tags tun -o star1ight-agent ./cmd/star1ight-agent
 ```
 
 如果未使用该标签（默认编译），TUN 协议接口将不会被编译打包，以此排除底层网络依赖，实现最高的二进制精简度和最小的内存开销。
@@ -79,7 +81,25 @@ go build -tags tun -o mini-sb-agent ./cmd/mini-sb-agent
 * *注：单个用户的限速仍会通过 `speed_limit` 在应用层单独被精准限制。*
 
 ### 5. Hysteria 2 密码自动映射 (Password Mapping)
-`mini-sb-agent` 会自动将该用户的 **VLESS UUID 作为其 Hysteria 2 的连接密码**。用户的面板 ID 将作为其 Hysteria 2 的用户名，方便将两种协议的流量统一统计上报。
+`Star1ight agent` 会自动将该用户的 **VLESS UUID 作为其 Hysteria 2 的连接密码**。用户的面板 ID 将作为其 Hysteria 2 的用户名，方便将两种协议的流量统一统计上报。
+
+### 6. Shadowsocks / Shadowsocks 2022
+当前版本支持 XBoard 原生 `shadowsocks` 节点下发，并会按节点 cipher 自动兼容普通 Shadowsocks 与 Shadowsocks 2022 用户密码口径。SS2022 服务端仍遵循 sing-box 的 `server_password + user_password` 组合逻辑，用户流量会按面板用户 ID 回传。
+
+### 7. 在线设备与来源分桶
+agent 会根据 sing-box inbound tracker 记录当前连接的用户与来源 IP，并在同步周期内向 XBoard `/alive` 接口推送在线设备列表。需要把中转来源显示成可读标签时，可以加入：
+
+```bash
+-source-buckets 'cnix=103.96.140.122/32;nbix=87.86.87.36/32,114.111.176.34/32'
+```
+
+为避免失败握手、错误 flow 或扫描流量把用户误判为在线，单个连接需要累计超过 `32KiB` 真实代理读写后才会激活在线设备；流量计费仍从首字节开始统计，不受该阈值影响。
+
+本地监控可用：
+
+```bash
+curl --unix-socket /run/star1ight-agent/stats.sock 'http://unix/stats?details=1'
+```
 
 ---
 
@@ -93,13 +113,13 @@ go build -tags tun -o mini-sb-agent ./cmd/mini-sb-agent
 <br>
 
 * **配置参考图 1（系统配置面板）：**
-<img src="https://raw.githubusercontent.com/ashvvvvv/mini-sb-agent/temp-assets-upload-branch/assets/img_1.jpg" width="600">
+<img src="https://raw.githubusercontent.com/Star1ight/Star1ight-agent/temp-assets-upload-branch/assets/img_1.jpg" width="600">
 
 * **配置参考图 2（VLess 节点编辑）：**
-<img src="https://raw.githubusercontent.com/ashvvvvv/mini-sb-agent/temp-assets-upload-branch/assets/img_2.jpg" width="600">
+<img src="https://raw.githubusercontent.com/Star1ight/Star1ight-agent/temp-assets-upload-branch/assets/img_2.jpg" width="600">
 
 * **配置参考图 3（Hysteria 节点编辑）：**
-<img src="https://raw.githubusercontent.com/ashvvvvv/mini-sb-agent/temp-assets-upload-branch/assets/img_3.jpg" width="600">
+<img src="https://raw.githubusercontent.com/Star1ight/Star1ight-agent/temp-assets-upload-branch/assets/img_3.jpg" width="600">
 
 </details>
 
@@ -107,7 +127,7 @@ go build -tags tun -o mini-sb-agent ./cmd/mini-sb-agent
 在您的小鸡上运行以下命令，按提示输入配置信息即可：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ashvvvvv/mini-sb-agent/master/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Star1ight/Star1ight-agent/master/install.sh | sh
 
 ```
 

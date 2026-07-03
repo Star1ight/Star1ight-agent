@@ -1,6 +1,6 @@
-# mini-sb-agent
+# Star1ight agent
 
-`mini-sb-agent` is a lightweight `sing-box` node management client specifically tailored for **Alpine Linux** environments. It is designed for resource-constrained NAT / low-memory VPS instances, supporting multi-node and multi-user management via the Xboard panel, and one-click configuration imports for proxy apps like Clash.
+`Star1ight agent` is a lightweight `sing-box` node management client specifically tailored for **Alpine Linux** environments. It is designed for resource-constrained NAT / low-memory VPS instances, supporting multi-node and multi-user management via the Xboard panel, and one-click configuration imports for proxy apps like Clash.
 
 > **Disclaimer**: This project is a streamlined and modified version based on the official `sing-box` core. The project owners assume no responsibility for any security or reliability issues. Using this software implies your consent to this disclaimer.
 
@@ -12,10 +12,10 @@ Running traditional node clients (e.g., V2bX) on NAT servers with only 128MB or 
 1. **Bloated Memory Overhead**: Packaging too many unused protocols by default results in a high idle physical memory footprint (RSS).
 2. **OOM Risks Under High Concurrency**: During multi-threaded speed tests or high-concurrency traffic throughput, the system's underlying TCP Socket Buffers inflate. The combined memory footprint of the proxy application and the TCP buffers triggers the kernel's Out-Of-Memory (OOM) Killer, terminating the proxy process.
 
-`mini-sb-agent` undergoes extreme simplification and tuning to minimize the proxy engine's RAM usage:
+`Star1ight agent` undergoes extreme simplification and tuning to minimize the proxy engine's RAM usage:
 
-* **Minimalist Protocol Stack**: VMess, Trojan, Shadowsocks, and other protocols are stripped out at compile time, retaining only Hysteria 2 and VLESS Reality.
-* **Single-Process Lightweight Setup**: Hysteria 2 and VLESS run within a single process. The idle physical memory (RSS) is reduced to only **~16.9 MB**.
+* **Minimalist Protocol Stack**: VMess, Trojan, default TUN, and other unused modules are stripped out at compile time, retaining VLESS Reality, Hysteria 2, Shadowsocks, and Shadowsocks 2022 for the current production footprint.
+* **Single-Process Lightweight Setup**: VLESS Reality, Hysteria 2, and Shadowsocks can run within a single process while keeping idle RSS suitable for low-memory NAT machines.
 * **Unused Dependency Pruning**: Bloated dependencies are pruned, and the binary is compiled specifically to maximize RAM conservation.
 * **Aggressive Go GC Tuning**: Defaults to `GOMEMLIMIT=40MiB`, `GOGC=70`, and restricts `GOMAXPROCS=1` to prevent the Go runtime from aggressively requesting virtual memory.
 
@@ -23,8 +23,10 @@ Running traditional node clients (e.g., V2bX) on NAT servers with only 128MB or 
 
 ## Core & Advanced Features
 
-* **Lightweight Dual Protocols**: Built-in support for VLESS Reality (using `xtls-rprx-vision` flow control) and Hysteria 2.
+* **Lightweight Multi-Protocol Core**: Built-in support for VLESS Reality (using `xtls-rprx-vision` flow control), Hysteria 2, Shadowsocks, and Shadowsocks 2022.
 * **Traffic Accounting**: Individual user traffic statistics combined with global node-wide traffic usage reporting.
+* **Online Device Reporting**: Reports active source IPs per user to XBoard `/api/v1/server/UniProxy/alive`, with short failed handshakes filtered out before they become online devices.
+* **Source Bucket Observability**: Supports `-source-buckets` and `-source-server-map` for separating traffic that lands on the same local port through different relays.
 * **Per-User Speed Limits**: Precise, isolated rate-limiting per user.
 * **Cross-Protocol Node-Level Bandwidth Cap**: Enabled via the `-node-rate-mbps` parameter. This configures a **globally shared upload/download Token Bucket**. Regardless of whether clients connect via **VLESS Reality** or **Hysteria 2**, all traffic entering/leaving the node **shares and competes for this node-wide speed limit**. When multi-protocol users concurrently saturate the node's bandwidth, they queue up gracefully in this rate-limiter, ensuring the VPS never exceeds the overall machine bandwidth limit.
 * **Hot-Reloadable User List**: Periodically queries the panel (default every 60 seconds) to update users and speed limits asynchronously without restarting the process.
@@ -43,7 +45,7 @@ Running traditional node clients (e.g., V2bX) on NAT servers with only 128MB or 
 If you need to activate the TUN interface to manage host-level transparent gateway routing, you must build the binary with the `tun` build tag:
 
 ```bash
-go build -tags tun -o mini-sb-agent ./cmd/mini-sb-agent
+go build -tags tun -o star1ight-agent ./cmd/star1ight-agent
 ```
 
 If compiled without this tag (default build), the TUN driver code is excluded, removing low-level networking dependencies to yield a smaller binary size and lower runtime memory overhead.
@@ -75,7 +77,25 @@ You can customize the maximum speed limits of Hysteria 2 and VLESS Reality. The 
 * *Note: Individual user speed limits configured in the panel will still be strictly enforced on the application layer via `speed_limit`.*
 
 ### 4. Hysteria 2 Password Auto-Mapping
-`mini-sb-agent` automatically maps the user's **VLESS UUID as their Hysteria 2 connection password**. The user's panel ID is mapped as the Hysteria 2 username, allowing traffic from both protocols to be accurately unified and reported under a single ID.
+`Star1ight agent` automatically maps the user's **VLESS UUID as their Hysteria 2 connection password**. The user's panel ID is mapped as the Hysteria 2 username, allowing traffic from both protocols to be accurately unified and reported under a single ID.
+
+### 5. Shadowsocks / Shadowsocks 2022
+The agent supports XBoard-native `shadowsocks` nodes and automatically handles both classic Shadowsocks and Shadowsocks 2022 based on the node cipher. SS2022 still follows sing-box's `server_password + user_password` model, while user traffic is reported back under the XBoard user ID.
+
+### 6. Online Devices and Source Buckets
+Online sessions are activated only after a single connection transfers more than `32KiB` of real proxied bytes. This prevents failed handshakes, flow mismatches, and scanner noise from pinning a user online. Traffic accounting still starts from the first byte and is not affected by this online-device threshold.
+
+Example source bucket configuration:
+
+```bash
+-source-buckets 'cnix=103.96.140.122/32;nbix=87.86.87.36/32,114.111.176.34/32'
+```
+
+Local detailed stats:
+
+```bash
+curl --unix-socket /run/star1ight-agent/stats.sock 'http://unix/stats?details=1'
+```
 
 ---
 
@@ -89,13 +109,13 @@ Configure your node in Xboard and take note of your **Panel URL**, **Communicati
 <br>
 
 * **Step 1: System Settings Panel**
-<img src="https://raw.githubusercontent.com/ashvvvvv/mini-sb-agent/temp-assets-upload-branch/assets/img_1.jpg" width="600">
+<img src="https://raw.githubusercontent.com/Star1ight/Star1ight-agent/temp-assets-upload-branch/assets/img_1.jpg" width="600">
 
 * **Step 2: Editing the VLESS Node**
-<img src="https://raw.githubusercontent.com/ashvvvvv/mini-sb-agent/temp-assets-upload-branch/assets/img_2.jpg" width="600">
+<img src="https://raw.githubusercontent.com/Star1ight/Star1ight-agent/temp-assets-upload-branch/assets/img_2.jpg" width="600">
 
 * **Step 3: Editing the Hysteria 2 Node**
-<img src="https://raw.githubusercontent.com/ashvvvvv/mini-sb-agent/temp-assets-upload-branch/assets/img_3.jpg" width="600">
+<img src="https://raw.githubusercontent.com/Star1ight/Star1ight-agent/temp-assets-upload-branch/assets/img_3.jpg" width="600">
 
 </details>
 
@@ -103,7 +123,7 @@ Configure your node in Xboard and take note of your **Panel URL**, **Communicati
 Execute the following command on your Alpine VPS to run the setup script and input your configurations:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ashvvvvv/mini-sb-agent/master/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Star1ight/Star1ight-agent/master/install.sh | sh
 ```
 
 ---
@@ -157,7 +177,7 @@ sysctl -p
    * **Peak TCP Connections**: 537
    * **System Socket Memory (Cgroup Sock Mem)**: 189 MB (198,889,472 bytes)
    * **Total Cgroup Memory**: 233 MB (244,355,072 bytes)
-   * **mini-sb-agent RSS**: Stable at **35 MB**
+   * **Star1ight agent RSS**: Stable at **35 MB**
    
    ![Test Run 1 Speedtest Results](https://www.speedtest.net/result/a/11658313877.png)
 
@@ -165,7 +185,7 @@ sysctl -p
    * **Peak TCP Connections**: 494
    * **System Socket Memory (Cgroup Sock Mem)**: 199 MB (209,104,896 bytes)
    * **Total Cgroup Memory**: 243 MB (255,594,496 bytes)
-   * **mini-sb-agent RSS**: Stable at **36 MB**
+   * **Star1ight agent RSS**: Stable at **36 MB**
    
    ![Test Run 2 Speedtest Results](https://www.speedtest.net/result/a/11658328624.png)
 
@@ -173,7 +193,7 @@ sysctl -p
    * **Peak TCP Connections**: 461
    * **System Socket Memory (Cgroup Sock Mem)**: 196 MB
    * **Total Cgroup Memory**: 240 MB
-   * **mini-sb-agent RSS**: Stable at **37 MB**
+   * **Star1ight agent RSS**: Stable at **37 MB**
    
    ![Test Run 3 Speedtest Results](https://www.speedtest.net/result/a/11658331342.png)
 

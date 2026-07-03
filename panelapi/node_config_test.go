@@ -65,3 +65,38 @@ func TestProbeNodeTypeSkipsMissingAndAcceptsHysteria2(t *testing.T) {
 		t.Fatalf("got nodeType=%q cfg=%+v", nodeType, cfg)
 	}
 }
+
+func TestFetchNodeConfigReadsShadowsocksFields(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/server/UniProxy/config" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("token") != "tok" || r.URL.Query().Get("node_id") != "31" || r.URL.Query().Get("node_type") != "shadowsocks" {
+			t.Fatalf("query = %s", r.URL.RawQuery)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"protocol":"shadowsocks",
+			"listen_ip":"0.0.0.0",
+			"server_port":3001,
+			"cipher":"2022-blake3-aes-256-gcm",
+			"server_key":"server-key",
+			"base_config":{"push_interval":60,"pull_interval":60}
+		}`))
+	}))
+	defer srv.Close()
+
+	cfg, err := NewClient(srv.URL, "tok", "31", "shadowsocks").FetchNodeConfig(context.Background())
+	if err != nil {
+		t.Fatalf("FetchNodeConfig: %v", err)
+	}
+	if cfg.Protocol != "shadowsocks" || cfg.ListenIP != "0.0.0.0" || cfg.ServerPort != 3001 {
+		t.Fatalf("unexpected config: %+v", cfg)
+	}
+	if cfg.Cipher != "2022-blake3-aes-256-gcm" || cfg.ServerKey != "server-key" {
+		t.Fatalf("unexpected shadowsocks fields: cipher=%q server_key=%q", cfg.Cipher, cfg.ServerKey)
+	}
+	if cfg.BaseConfig.PullInterval != 60 || cfg.BaseConfig.PushInterval != 60 {
+		t.Fatalf("unexpected base config: %+v", cfg.BaseConfig)
+	}
+}

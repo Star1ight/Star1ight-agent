@@ -53,24 +53,58 @@ type TLSSettings struct {
 	ECH           ECHConfig `json:"ech,omitempty"`
 }
 
+type OutboundConfig struct {
+	Tag      string         `json:"tag,omitempty"`
+	Protocol string         `json:"protocol,omitempty"`
+	Settings map[string]any `json:"settings,omitempty"`
+	ProxyTag string         `json:"proxy_tag,omitempty"`
+}
+
+type RouteMatch struct {
+	Domains        []string `json:"domains,omitempty"`
+	DomainSuffixes []string `json:"domain_suffixes,omitempty"`
+	IPCIDRs        []string `json:"ip_cidrs,omitempty"`
+	Ports          []string `json:"ports,omitempty"`
+	Networks       []string `json:"networks,omitempty"`
+	SourceCIDRs    []string `json:"source_cidrs,omitempty"`
+	SourcePorts    []string `json:"source_ports,omitempty"`
+}
+
+type RouteAction struct {
+	Type   string `json:"type,omitempty"`
+	Target string `json:"target,omitempty"`
+}
+
+type CustomRouteRule struct {
+	Name     string      `json:"name,omitempty"`
+	Disabled bool        `json:"disabled,omitempty"`
+	Match    RouteMatch  `json:"match,omitempty"`
+	Action   RouteAction `json:"action,omitempty"`
+}
+
 type NodeConfig struct {
-	Protocol      string      `json:"protocol,omitempty"`
-	ListenIP      string      `json:"listen_ip,omitempty"`
-	ServerPort    int         `json:"server_port,omitempty"`
-	Network       string      `json:"network,omitempty"`
-	NetworkConfig any         `json:"networkSettings,omitempty"`
-	TLS           int         `json:"tls,omitempty"`
-	Flow          string      `json:"flow,omitempty"`
-	Decryption    *string     `json:"decryption,omitempty"`
-	TLSSettings   TLSSettings `json:"tls_settings,omitempty"`
-	Version       int         `json:"version,omitempty"`
-	Host          string      `json:"host,omitempty"`
-	ServerName    string      `json:"server_name,omitempty"`
-	UpMbps        int         `json:"up_mbps,omitempty"`
-	DownMbps      int         `json:"down_mbps,omitempty"`
-	Obfs          string      `json:"obfs,omitempty"`
-	ObfsPassword  string      `json:"obfs-password,omitempty"`
-	BaseConfig    BaseConfig  `json:"base_config,omitempty"`
+	Protocol         string            `json:"protocol,omitempty"`
+	ListenIP         string            `json:"listen_ip,omitempty"`
+	ServerPort       int               `json:"server_port,omitempty"`
+	Cipher           string            `json:"cipher,omitempty"`
+	ServerKey        string            `json:"server_key,omitempty"`
+	Network          string            `json:"network,omitempty"`
+	NetworkConfig    any               `json:"networkSettings,omitempty"`
+	TLS              int               `json:"tls,omitempty"`
+	Flow             string            `json:"flow,omitempty"`
+	Decryption       *string           `json:"decryption,omitempty"`
+	TLSSettings      TLSSettings       `json:"tls_settings,omitempty"`
+	Version          int               `json:"version,omitempty"`
+	Host             string            `json:"host,omitempty"`
+	ServerName       string            `json:"server_name,omitempty"`
+	UpMbps           int               `json:"up_mbps,omitempty"`
+	DownMbps         int               `json:"down_mbps,omitempty"`
+	Obfs             string            `json:"obfs,omitempty"`
+	ObfsPassword     string            `json:"obfs-password,omitempty"`
+	BaseConfig       BaseConfig        `json:"base_config,omitempty"`
+	CustomOutbounds  []OutboundConfig  `json:"custom_outbounds,omitempty"`
+	CustomRouteRules []CustomRouteRule `json:"custom_route_rules,omitempty"`
+	CustomRoutes     []map[string]any  `json:"custom_routes,omitempty"`
 }
 
 func (c *Client) FetchNodeConfig(ctx context.Context) (NodeConfig, error) {

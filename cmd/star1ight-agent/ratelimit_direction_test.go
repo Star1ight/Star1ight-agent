@@ -7,14 +7,17 @@ import (
 	"testing"
 	"time"
 
-	"mini-sb-agent/counter"
-	"mini-sb-agent/panelapi"
+	"star1ight-agent/counter"
+	"star1ight-agent/panelapi"
 
 	"github.com/sagernet/sing-box/adapter"
 	M "github.com/sagernet/sing/common/metadata"
 )
 
 func TestUserRateLimitAppliesBeforeDownloadWrite(t *testing.T) {
+	if !userRateLimitBuildEnabled {
+		t.Skip("user rate limiting is compile-time disabled")
+	}
 	users := NewUserManager(0)
 	if err := users.ApplyBox(map[string]adapter.Inbound{}, []panelapi.User{{ID: 7, UUID: "uuid-7", SpeedLimit: 1}}); err != nil {
 		t.Fatal(err)

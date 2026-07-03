@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"mini-sb-agent/counter"
-	"mini-sb-agent/panelapi"
+	"star1ight-agent/counter"
+	"star1ight-agent/panelapi"
 
 	"github.com/sagernet/sing-box/adapter"
 	M "github.com/sagernet/sing/common/metadata"
@@ -297,6 +297,9 @@ func TestNodeLimiterPairSurvivesUserChurn(t *testing.T) {
 // Verify the counter.RateLimitedConn exported by RoutedConnection has the
 // expected type (not the old single-limiter wrapper which would share).
 func TestRoutedConnectionReturnsRateLimitedType(t *testing.T) {
+	if !userRateLimitBuildEnabled {
+		t.Skip("user rate limiting is compile-time disabled")
+	}
 	um := NewUserManager(0)
 	if err := um.ApplyBox(nil, []panelapi.User{
 		{ID: 1, UUID: "uuid-1", SpeedLimit: 1},

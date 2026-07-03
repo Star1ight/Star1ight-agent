@@ -1,6 +1,7 @@
 package counter
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"github.com/sagernet/sing/common/bufio"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
+	xrate "golang.org/x/time/rate"
 )
 
 const (
@@ -19,44 +21,59 @@ const (
 	maxReadChunk       = 64 * 1024
 )
 
-// RateLimiter is a small token-bucket limiter shared by all connections for a
-// node or a user. It is intentionally byte-oriented and dependency-free so the
-// no-user-limit build can compile it out with build tags.
+// RateLimiter is a byte-oriented token bucket shared by all connections for a
+// node or a user. It uses x/time/rate so the hot path relies on the standard
+// limiter implementation instead of a hand-rolled sleep/mutex loop.
 type RateLimiter struct {
-	mu       sync.Mutex
+	mu       sync.RWMutex
 	rate     int64
-	burst    int64
-	tokens   float64
-	last     time.Time
+	burst    int
+	limiter  *xrate.Limiter
 	disabled bool
 	closed   bool
 }
 
 func NewRateLimiter(bytesPerSecond int64) *RateLimiter {
-	l := &RateLimiter{last: time.Now()}
+	l := &RateLimiter{}
 	l.SetRate(bytesPerSecond)
 	return l
+}
+
+func burstFor(bytesPerSecond int64) int {
+	burst := bytesPerSecond * int64(defaultBurstWindow) / int64(time.Second)
+	if burst < maxWriteChunk {
+		burst = maxWriteChunk
+	}
+	if burst > int64(^uint(0)>>1) {
+		return int(^uint(0) >> 1)
+	}
+	return int(burst)
 }
 
 func (l *RateLimiter) SetRate(bytesPerSecond int64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.rate = bytesPerSecond
-	l.burst = bytesPerSecond * int64(defaultBurstWindow) / int64(time.Second)
-	if l.burst < maxWriteChunk {
-		l.burst = maxWriteChunk
-	}
 	if bytesPerSecond <= 0 {
 		l.disabled = true
-		l.tokens = 0
+		l.burst = 0
+		l.limiter = nil
 		return
+	}
+	burst := burstFor(bytesPerSecond)
+	now := time.Now()
+	if l.limiter == nil {
+		l.limiter = xrate.NewLimiter(xrate.Limit(bytesPerSecond), burst)
+	} else {
+		l.limiter.SetLimitAt(now, xrate.Limit(bytesPerSecond))
+		l.limiter.SetBurstAt(now, burst)
 	}
 	l.closed = false
 	l.disabled = false
-	if l.tokens < 0 || l.tokens > float64(l.burst) {
-		l.tokens = 0
-	}
-	l.last = time.Now()
+	l.burst = burst
+	// x/time/rate starts full; draining the initial burst preserves the old
+	// smoothing behavior where a fresh limiter did not allow an instant burst.
+	l.limiter.AllowN(now, burst)
 }
 
 func (l *RateLimiter) Close() {
@@ -69,22 +86,28 @@ func (l *RateLimiter) Close() {
 	l.disabled = true
 	l.rate = 0
 	l.burst = 0
-	l.tokens = 0
+	l.limiter = nil
 }
 
 func (l *RateLimiter) Closed() bool {
 	if l == nil {
 		return true
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.mu.RLock()
+	defer l.mu.RUnlock()
 	return l.closed
 }
 
 func (l *RateLimiter) Rate() int64 {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.mu.RLock()
+	defer l.mu.RUnlock()
 	return l.rate
+}
+
+func (l *RateLimiter) snapshot() (*xrate.Limiter, int, bool, bool) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.limiter, l.burst, l.disabled, l.closed
 }
 
 func (l *RateLimiter) Wait(n int) error {
@@ -93,24 +116,22 @@ func (l *RateLimiter) Wait(n int) error {
 	}
 	remaining := n
 	for remaining > 0 {
-		chunk := remaining
-		l.mu.Lock()
-		burst := l.burst
-		disabled := l.disabled || l.rate <= 0 || l.closed
-		l.mu.Unlock()
+		limiter, burst, disabled, closed := l.snapshot()
+		if closed {
+			return ErrLimiterClosed
+		}
 		if disabled {
-			_, err := l.reserve(0)
+			return nil
+		}
+		chunk := remaining
+		if burst > 0 && chunk > burst {
+			chunk = burst
+		}
+		if limiter == nil {
+			return nil
+		}
+		if err := limiter.WaitN(context.Background(), chunk); err != nil {
 			return err
-		}
-		if burst > 0 && int64(chunk) > burst {
-			chunk = int(burst)
-		}
-		wait, err := l.reserve(chunk)
-		if err != nil {
-			return err
-		}
-		if wait > 0 {
-			time.Sleep(wait)
 		}
 		remaining -= chunk
 	}
@@ -130,73 +151,17 @@ func (l *RateLimiter) Allow(n int) (bool, error) {
 	if l == nil || n <= 0 {
 		return true, nil
 	}
-	return l.allow(n)
-}
-
-func (l *RateLimiter) allow(n int) (bool, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.closed {
+	limiter, burst, disabled, closed := l.snapshot()
+	if closed {
 		return false, ErrLimiterClosed
 	}
-	if l.disabled || l.rate <= 0 || n <= 0 {
+	if disabled || limiter == nil {
 		return true, nil
 	}
-	now := time.Now()
-	if l.last.IsZero() {
-		l.last = now
+	if burst > 0 && n > burst {
+		n = burst
 	}
-	elapsed := now.Sub(l.last).Seconds()
-	if elapsed > 0 {
-		l.tokens += elapsed * float64(l.rate)
-		if l.tokens > float64(l.burst) {
-			l.tokens = float64(l.burst)
-		}
-		l.last = now
-	}
-	need := float64(n)
-	if need > float64(l.burst) {
-		need = float64(l.burst)
-	}
-	if l.tokens < need {
-		return false, nil
-	}
-	l.tokens -= need
-	return true, nil
-}
-
-func (l *RateLimiter) reserve(n int) (time.Duration, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.closed {
-		return 0, ErrLimiterClosed
-	}
-	if l.disabled || l.rate <= 0 || n <= 0 {
-		return 0, nil
-	}
-	now := time.Now()
-	if l.last.IsZero() {
-		l.last = now
-	}
-	elapsed := now.Sub(l.last).Seconds()
-	if elapsed > 0 {
-		l.tokens += elapsed * float64(l.rate)
-		if l.tokens > float64(l.burst) {
-			l.tokens = float64(l.burst)
-		}
-		l.last = now
-	}
-	need := float64(n)
-	if need > float64(l.burst) {
-		need = float64(l.burst)
-	}
-	if l.tokens >= need {
-		l.tokens -= need
-		return 0, nil
-	}
-	missing := need - l.tokens
-	l.tokens -= need
-	return time.Duration(missing / float64(l.rate) * float64(time.Second)), nil
+	return limiter.AllowN(time.Now(), n), nil
 }
 
 type RateLimitedConn struct {
@@ -300,11 +265,8 @@ func NewRateLimitedPacketConn(conn N.PacketConn, readLimiter, writeLimiter *Rate
 func (p *RateLimitedPacketConn) ReadPacket(buff *buf.Buffer) (M.Socksaddr, error) {
 	dest, err := p.PacketConn.ReadPacket(buff)
 	if err == nil && buff.Len() > 0 && p.readLimiter != nil {
-		allowed, waitErr := p.readLimiter.Allow(buff.Len())
-		if waitErr != nil {
-			err = waitErr
-		} else if !allowed {
-			buff.Reset()
+		if p.readLimiter.Closed() {
+			err = ErrLimiterClosed
 		}
 	}
 	return dest, err
@@ -312,12 +274,8 @@ func (p *RateLimitedPacketConn) ReadPacket(buff *buf.Buffer) (M.Socksaddr, error
 
 func (p *RateLimitedPacketConn) WritePacket(buff *buf.Buffer, dest M.Socksaddr) error {
 	if buff.Len() > 0 && p.writeLimiter != nil {
-		allowed, err := p.writeLimiter.Allow(buff.Len())
-		if err != nil {
-			return err
-		}
-		if !allowed {
-			return nil
+		if p.writeLimiter.Closed() {
+			return ErrLimiterClosed
 		}
 	}
 	return p.PacketConn.WritePacket(buff, dest)

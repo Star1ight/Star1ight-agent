@@ -7,11 +7,13 @@ import (
 )
 
 type Syncer struct {
-	Panel    Panel
-	Snapshot func() map[string]map[string][2]int64
-	Commit   func(map[string]map[string][2]int64)
-	Users    func([]User) error
-	Every    time.Duration
+	Panel       Panel
+	Snapshot    func() map[string]map[string][2]int64
+	Commit      func(map[string]map[string][2]int64)
+	Alive       func() map[string]map[string][]string
+	CommitAlive func(map[string]map[string][]string)
+	Users       func([]User) error
+	Every       time.Duration
 }
 
 func (s *Syncer) Run(ctx context.Context) {
@@ -46,7 +48,23 @@ func (s *Syncer) syncOnce(ctx context.Context) {
 			log.Printf("apply users: %v", err)
 		}
 	}
+	s.flushAlive(ctx)
 	s.flush(ctx)
+}
+
+func (s *Syncer) flushAlive(ctx context.Context) {
+	if s.Panel == nil || s.Alive == nil || s.CommitAlive == nil {
+		return
+	}
+	alive := s.Alive()
+	if len(alive) == 0 {
+		return
+	}
+	if err := s.Panel.PushAlive(ctx, alive); err != nil {
+		log.Printf("panel api push alive: %v", err)
+		return
+	}
+	s.CommitAlive(alive)
 }
 
 func (s *Syncer) flush(ctx context.Context) {
