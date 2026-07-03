@@ -52,6 +52,7 @@ jobs:
             export GOAMD64='${{ matrix.goamd64 }}'
           fi
           go build -trimpath \
+            -buildvcs=false \
             -tags 'with_quic with_utls' \
             -ldflags '-s -w -buildid=' \
             -o 'dist/star1ight-agent-${{ matrix.suffix }}' \
