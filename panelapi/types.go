@@ -31,10 +31,11 @@ type TrafficTotals struct {
 }
 
 type MachineStatus struct {
-	CPU     float64
-	Mem     UsagePair
-	Swap    UsagePair
-	Disk    UsagePair
-	Net     *NetSpeed
-	Traffic *TrafficTotals
+	CPU          float64
+	Mem          UsagePair
+	Swap         UsagePair
+	Disk         UsagePair
+	Net          *NetSpeed
+	Traffic      *TrafficTotals
+	AgentVersion string
 }

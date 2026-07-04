@@ -32,8 +32,9 @@ func TestReportMachineStatusPostsExpectedPayload(t *testing.T) {
 	client.MachineToken = "machine-token"
 
 	err := client.ReportMachineStatus(context.Background(), MachineStatus{
-		CPU: 51.5,
-		Mem: UsagePair{Total: 4096, Used: 1024},
+		CPU:          51.5,
+		Mem:          UsagePair{Total: 4096, Used: 1024},
+		AgentVersion: "v-test",
 		Swap: UsagePair{
 			Total: 2048,
 			Used:  256,
@@ -66,6 +67,9 @@ func TestReportMachineStatusPostsExpectedPayload(t *testing.T) {
 	}
 	if gotBody["node_id"] != nil {
 		t.Fatalf("node_id unexpectedly present: %v", gotBody["node_id"])
+	}
+	if gotBody["agent_version"] != "v-test" {
+		t.Fatalf("agent_version = %v, want v-test", gotBody["agent_version"])
 	}
 
 	mem, ok := gotBody["mem"].(map[string]any)

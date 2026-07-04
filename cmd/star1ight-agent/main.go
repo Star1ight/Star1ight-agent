@@ -386,15 +386,7 @@ func serveStats(ctx context.Context, listen string, h *Hook) error {
 		details := r.URL.Query().Get("details") == "1"
 		w.Header().Set("Content-Type", "application/json")
 		if details {
-			traffic := h.Snapshot(reset)
-			if delta {
-				traffic = h.SnapshotDelta()
-			}
-			json.NewEncoder(w).Encode(map[string]any{
-				"traffic": traffic,
-				"devices": h.DeviceSnapshot(),
-				"sources": h.SourceSnapshot(),
-			})
+			json.NewEncoder(w).Encode(statsDetailsPayload(h, reset, delta))
 			return
 		}
 		if delta {
@@ -426,6 +418,20 @@ func serveStats(ctx context.Context, listen string, h *Hook) error {
 	}()
 	log.Println("stats api", listen)
 	return srv.Serve(ln)
+}
+
+func statsDetailsPayload(h *Hook, reset bool, delta bool) map[string]any {
+	traffic := h.Snapshot(reset)
+	if delta {
+		traffic = h.SnapshotDelta()
+	}
+	return map[string]any{
+		"agent_slug":    agentSlug,
+		"agent_version": agentVersion,
+		"traffic":       traffic,
+		"devices":       h.DeviceSnapshot(),
+		"sources":       h.SourceSnapshot(),
+	}
 }
 
 func main() {

@@ -310,6 +310,9 @@ func (c *Client) ReportMachineStatus(ctx context.Context, status MachineStatus) 
 			"down": status.Traffic.Down,
 		}
 	}
+	if status.AgentVersion != "" {
+		payload["agent_version"] = status.AgentVersion
+	}
 
 	var body bytes.Buffer
 	if err := json.NewEncoder(&body).Encode(payload); err != nil {

@@ -111,7 +111,8 @@ func sampleMachineStatus(cpuSample func() (float64, error)) panelapi.MachineStat
 	}
 
 	return panelapi.MachineStatus{
-		CPU: cpu,
+		CPU:          cpu,
+		AgentVersion: agentVersion,
 		Mem: panelapi.UsagePair{
 			Total: totalMem * 1024,
 			Used:  memUsed * 1024,
@@ -130,10 +131,10 @@ func sampleMachineStatus(cpuSample func() (float64, error)) panelapi.MachineStat
 }
 
 type netCollector struct {
-	prevRx   uint64
-	prevTx   uint64
-	prevAt   time.Time
-	ready    bool
+	prevRx uint64
+	prevTx uint64
+	prevAt time.Time
+	ready  bool
 }
 
 var defaultNetCollector netCollector
