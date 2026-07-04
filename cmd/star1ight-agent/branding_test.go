@@ -78,3 +78,18 @@ func TestInstallScriptSupportsSourceServerMapAndShadowsocks(t *testing.T) {
 		}
 	}
 }
+
+func TestInstallScriptDefaultsToLatestRelease(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "install.sh"))
+	if err != nil {
+		t.Fatalf("read install.sh: %v", err)
+	}
+	body := string(data)
+
+	if !strings.Contains(body, `VERSION="v0.1.9"`) {
+		t.Fatalf("install.sh default version is not v0.1.9")
+	}
+	if !strings.Contains(body, `默认 v0.1.9`) {
+		t.Fatalf("install.sh help does not mention v0.1.9")
+	}
+}
