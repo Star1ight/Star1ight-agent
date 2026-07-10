@@ -91,6 +91,14 @@ Example source bucket configuration:
 -source-buckets 'cnix=103.96.140.122/32;nbix=87.86.87.36/32,114.111.176.34/32'
 ```
 
+When a backend agent receives traffic from a protocol-aware frontend that already reports user traffic and online devices, mark that frontend source for dropping to prevent double accounting:
+
+```bash
+-source-buckets 'backend-relay=198.51.100.42/32' -source-drop backend-relay
+```
+
+`source-drop` suppresses only user-level `/UniProxy/push` and `/UniProxy/alive` reports for matching sources. Machine heartbeats, total machine traffic, and local `/stats?details=1` diagnostics remain available.
+
 Local detailed stats:
 
 ```bash

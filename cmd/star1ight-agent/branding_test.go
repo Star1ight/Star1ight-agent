@@ -79,6 +79,29 @@ func TestInstallScriptSupportsSourceServerMapAndShadowsocks(t *testing.T) {
 	}
 }
 
+func TestInstallScriptSupportsSourceDrop(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "install.sh"))
+	if err != nil {
+		t.Fatalf("read install.sh: %v", err)
+	}
+	body := string(data)
+
+	mustContain := []string{
+		`SOURCE_DROP=""`,
+		`--source-drop SPEC`,
+		`--source-drop) SOURCE_DROP="${2:-}"; shift 2 ;;`,
+		`SOURCE_DROP=$(shell_quote "$SOURCE_DROP")`,
+		`-source-drop "$SOURCE_DROP"`,
+		`source_drop=$SOURCE_DROP`,
+		`--source-drop 需要同时指定 --source-buckets`,
+	}
+	for _, want := range mustContain {
+		if !strings.Contains(body, want) {
+			t.Fatalf("install.sh missing %q", want)
+		}
+	}
+}
+
 func TestInstallScriptDefaultsToLatestRelease(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "install.sh"))
 	if err != nil {
@@ -86,10 +109,10 @@ func TestInstallScriptDefaultsToLatestRelease(t *testing.T) {
 	}
 	body := string(data)
 
-	if !strings.Contains(body, `VERSION="v0.1.9"`) {
-		t.Fatalf("install.sh default version is not v0.1.9")
+	if !strings.Contains(body, `VERSION="v0.1.12"`) {
+		t.Fatalf("install.sh default version is not v0.1.12")
 	}
-	if !strings.Contains(body, `默认 v0.1.9`) {
-		t.Fatalf("install.sh help does not mention v0.1.9")
+	if !strings.Contains(body, `默认 v0.1.12`) {
+		t.Fatalf("install.sh help does not mention v0.1.12")
 	}
 }

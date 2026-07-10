@@ -3,7 +3,7 @@ set -eu
 
 APP="star1ight-agent"
 REPO="Star1ight/Star1ight-agent"
-VERSION="v0.1.9"
+VERSION="v0.1.12"
 INSTALL_DIR="/opt/star1ight-agent"
 RUN_DIR="/run/star1ight-agent"
 SERVICE_NAME="star1ight-agent"
@@ -18,6 +18,7 @@ PANEL_EVERY="60s"
 NODE_RATE_MBPS="0"
 SOURCE_BUCKETS=""
 SOURCE_SERVER_MAP=""
+SOURCE_DROP=""
 HY2_UP_MBPS="0"
 HY2_DOWN_MBPS="0"
 HY2_IGNORE_CLIENT_BANDWIDTH="0"
@@ -97,10 +98,11 @@ star1ight-agent one-click installer
   --node-rate-mbps N               整节点共享限速；0 关闭
   --source-buckets SPEC            可选：来源分桶，例如 'cnix=103.96.140.122/32;nbix=87.86.87.36/32'
   --source-server-map SPEC         可选：来源桶到 XBoard 节点 ID，例如 'cnix=51,nbix=52'；需配合 --source-buckets
+  --source-drop SPEC               可选：不上报用户流量/在线的来源标签；需配合 --source-buckets
   --gomemlimit VALUE               默认 40MiB；极小内存可用 36MiB
   --gogc N                         默认 70；极小内存可用 60
   --gomaxprocs N                   默认 1
-  --version TAG                    GitHub Release tag，默认 v0.1.9
+  --version TAG                    GitHub Release tag，默认 v0.1.12
   环境变量 STAR1IGHT_AGENT_BASE_URL  可覆盖下载地址，测试/内网安装用
   --force                          覆盖旧安装
   --yes                            非交互确认，配合命令行参数使用
@@ -259,6 +261,7 @@ while [ "$#" -gt 0 ]; do
     --node-rate-mbps) NODE_RATE_MBPS="${2:-}"; shift 2 ;;
     --source-buckets) SOURCE_BUCKETS="${2:-}"; shift 2 ;;
     --source-server-map) SOURCE_SERVER_MAP="${2:-}"; shift 2 ;;
+    --source-drop) SOURCE_DROP="${2:-}"; shift 2 ;;
     --gomemlimit) GOMEMLIMIT="${2:-}"; shift 2 ;;
     --gogc) GOGC="${2:-}"; shift 2 ;;
     --gomaxprocs) GOMAXPROCS="${2:-}"; shift 2 ;;
@@ -283,6 +286,7 @@ fi
 [ -n "$PANEL_TOKEN" ] || err "缺少 --panel-token；可直接运行 sh install.sh 进入交互式安装"
 [ -z "$MACHINE_ID" ] || [ -n "$MACHINE_TOKEN" ] || err "指定了 --machine-id 时必须同时提供 --machine-token"
 [ -z "$SOURCE_SERVER_MAP" ] || [ -n "$SOURCE_BUCKETS" ] || err "--source-server-map 需要同时指定 --source-buckets"
+[ -z "$SOURCE_DROP" ] || [ -n "$SOURCE_BUCKETS" ] || err "--source-drop 需要同时指定 --source-buckets"
 case "$NODE_MODE" in
   vless|VLESS|reality|Reality) NODE_MODE="vless" ;;
   hy2|HY2|hysteria|hysteria2) NODE_MODE="hy2" ;;
@@ -440,6 +444,7 @@ PANEL_EVERY=$(shell_quote "$PANEL_EVERY")
 NODE_RATE_MBPS=$(shell_quote "$NODE_RATE_MBPS")
 SOURCE_BUCKETS=$(shell_quote "$SOURCE_BUCKETS")
 SOURCE_SERVER_MAP=$(shell_quote "$SOURCE_SERVER_MAP")
+SOURCE_DROP=$(shell_quote "$SOURCE_DROP")
 HY2_UP_MBPS=$(shell_quote "$HY2_UP_MBPS")
 HY2_DOWN_MBPS=$(shell_quote "$HY2_DOWN_MBPS")
 HY2_IGNORE_CLIENT_BANDWIDTH=$(shell_quote "$HY2_IGNORE_CLIENT_BANDWIDTH")
@@ -501,6 +506,9 @@ fi
 if [ -n "${SOURCE_SERVER_MAP:-}" ]; then
   set -- "$@" -source-server-map "$SOURCE_SERVER_MAP"
 fi
+if [ -n "${SOURCE_DROP:-}" ]; then
+  set -- "$@" -source-drop "$SOURCE_DROP"
+fi
 if [ "${NODE_MODE:-vless}" = "both" ]; then
   set -- "$@" -panel-hy2-node-id "$HY2_NODE_ID" -panel-hy2-node-type hysteria
 fi
@@ -535,6 +543,7 @@ machine_token=$MACHINE_TOKEN
 machine_every=$MACHINE_EVERY
 source_buckets=$SOURCE_BUCKETS
 source_server_map=$SOURCE_SERVER_MAP
+source_drop=$SOURCE_DROP
 protocol=$PROTOCOL
 EOF
 chmod 0600 "$INSTALL_DIR/install.meta"
