@@ -13,6 +13,12 @@ import (
 	sbshadowsocks "github.com/sagernet/sing-box/protocol/shadowsocks"
 )
 
+const (
+	testSS2022ServerPassword     = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+	testSS2022FirstUserPassword  = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXowMTIzNDU="
+	testSS2022SecondUserPassword = "ZmVkY2JhOTg3NjU0MzIxMGZlZGNiYTk4NzY1NDMyMTA="
+)
+
 func TestUserManagerResolvesAliasesAndActiveIDs(t *testing.T) {
 	m := NewUserManager(0)
 	if err := m.ApplyBox(nil, []panelapi.User{{ID: 7, UUID: "uuid-7", Password: "pw-7", Name: "name-7"}}); err != nil {
@@ -63,27 +69,27 @@ func TestUserManagerApplyBoxShadowsocksUsers(t *testing.T) {
 
 	m := NewUserManager(0)
 	if err := m.ApplyBox(collectInbounds(boxInstance), []panelapi.User{
-		{ID: 7, Password: "ydQOvsKgJ6qUqte1qoVeKEb7TDsGEDwipp9LEbNvDos="},
-		{ID: 8, Password: "CMflJHT5QeUrjhPHJCpWYHvXAmYdK9Ckky0wxNf2A4c="},
+		{ID: 7, Password: testSS2022FirstUserPassword},
+		{ID: 8, Password: testSS2022SecondUserPassword},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if got := shadowsocksInboundUserNames(ssInbound); !reflect.DeepEqual(got, []string{"7", "8"}) {
 		t.Fatalf("shadowsocks users = %#v, want [7 8]", got)
 	}
-	if got := m.Resolve("ydQOvsKgJ6qUqte1qoVeKEb7TDsGEDwipp9LEbNvDos="); got != "7" {
-		t.Fatalf("Resolve(%q)=%q, want 7", "ydQOvsKgJ6qUqte1qoVeKEb7TDsGEDwipp9LEbNvDos=", got)
+	if got := m.Resolve(testSS2022FirstUserPassword); got != "7" {
+		t.Fatalf("Resolve(%q)=%q, want 7", testSS2022FirstUserPassword, got)
 	}
 
 	if err := m.ApplyBox(collectInbounds(boxInstance), []panelapi.User{
-		{ID: 8, Password: "CMflJHT5QeUrjhPHJCpWYHvXAmYdK9Ckky0wxNf2A4c="},
+		{ID: 8, Password: testSS2022SecondUserPassword},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if got := shadowsocksInboundUserNames(ssInbound); !reflect.DeepEqual(got, []string{"8"}) {
 		t.Fatalf("shadowsocks users after delete = %#v, want [8]", got)
 	}
-	if got := m.Resolve("ydQOvsKgJ6qUqte1qoVeKEb7TDsGEDwipp9LEbNvDos="); got != "ydQOvsKgJ6qUqte1qoVeKEb7TDsGEDwipp9LEbNvDos=" {
+	if got := m.Resolve(testSS2022FirstUserPassword); got != testSS2022FirstUserPassword {
 		t.Fatalf("deleted password still resolves to %q", got)
 	}
 }
@@ -101,7 +107,7 @@ func mustNewManagedShadowsocksBox(t *testing.T) (*box.Box, *sbshadowsocks.MultiI
       "listen": "127.0.0.1",
       "listen_port": 0,
       "method": "2022-blake3-aes-256-gcm",
-      "password": "QBnIT1FxPZm2yUIP5P1RkriZ1aM5fb6Q9UkEIsfTtNk=",
+      "password": "` + testSS2022ServerPassword + `",
       "managed": true
     }
   ],

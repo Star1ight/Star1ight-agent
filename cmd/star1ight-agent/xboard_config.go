@@ -96,6 +96,7 @@ func generateXboardConfig(ctx context.Context, opts xboardGenerateOptions) (stri
 	}
 	var inbounds []any
 	var routeConfig map[string]any
+	var dnsConfig map[string]any
 	var outbounds []any
 	switch mode {
 	case "vless":
@@ -112,7 +113,7 @@ func generateXboardConfig(ctx context.Context, opts xboardGenerateOptions) (stri
 			return "", err
 		}
 		inbounds = append(inbounds, inbound)
-		outbounds, routeConfig, err = buildCustomRouting(cfg)
+		outbounds, routeConfig, dnsConfig, err = buildCustomRouting(cfg)
 		if err != nil {
 			return "", err
 		}
@@ -130,7 +131,7 @@ func generateXboardConfig(ctx context.Context, opts xboardGenerateOptions) (stri
 			return "", err
 		}
 		inbounds = append(inbounds, inbound)
-		outbounds, routeConfig, err = buildCustomRouting(cfg)
+		outbounds, routeConfig, dnsConfig, err = buildCustomRouting(cfg)
 		if err != nil {
 			return "", err
 		}
@@ -157,7 +158,7 @@ func generateXboardConfig(ctx context.Context, opts xboardGenerateOptions) (stri
 			return "", err
 		}
 		inbounds = append(inbounds, vlessInbound, hy2Inbound)
-		outbounds, routeConfig, err = mergeCustomRouting(vlessCfg, hy2Cfg)
+		outbounds, routeConfig, dnsConfig, err = mergeCustomRouting(vlessCfg, hy2Cfg)
 		if err != nil {
 			return "", err
 		}
@@ -175,14 +176,14 @@ func generateXboardConfig(ctx context.Context, opts xboardGenerateOptions) (stri
 			return "", err
 		}
 		inbounds = append(inbounds, inbound)
-		outbounds, routeConfig, err = buildCustomRouting(cfg)
+		outbounds, routeConfig, dnsConfig, err = buildCustomRouting(cfg)
 		if err != nil {
 			return "", err
 		}
 	default:
 		return "", fmt.Errorf("--node-mode must be vless, hy2, ss, or both")
 	}
-	data, err := buildSingBoxConfigFromInbounds(inbounds, outbounds, routeConfig)
+	data, err := buildSingBoxConfigFromInbounds(inbounds, outbounds, routeConfig, dnsConfig)
 	if err != nil {
 		return "", err
 	}
@@ -210,7 +211,7 @@ func defaultListen(listen string) string {
 	return listen
 }
 
-func buildSingBoxConfigFromInbounds(inbounds []any, customOutbounds []any, routeConfig map[string]any) ([]byte, error) {
+func buildSingBoxConfigFromInbounds(inbounds []any, customOutbounds []any, routeConfig map[string]any, dnsConfig map[string]any) ([]byte, error) {
 	outbounds := []any{
 		map[string]any{"type": "direct", "tag": "direct"},
 		map[string]any{"type": "block", "tag": "block"},
@@ -229,6 +230,9 @@ func buildSingBoxConfigFromInbounds(inbounds []any, customOutbounds []any, route
 		"outbounds": outbounds,
 		"route":     route,
 	}
+	if len(dnsConfig) > 0 {
+		root["dns"] = dnsConfig
+	}
 	return json.MarshalIndent(root, "", "  ")
 }
 
@@ -237,11 +241,11 @@ func buildSingBoxConfigFromNode(cfg panelapi.NodeConfig, opts xboardGenerateOpti
 	if err != nil {
 		return nil, err
 	}
-	outbounds, routeConfig, err := buildCustomRouting(cfg)
+	outbounds, routeConfig, dnsConfig, err := buildCustomRouting(cfg)
 	if err != nil {
 		return nil, err
 	}
-	return buildSingBoxConfigFromInbounds([]any{inbound}, outbounds, routeConfig)
+	return buildSingBoxConfigFromInbounds([]any{inbound}, outbounds, routeConfig, dnsConfig)
 }
 
 func inboundFromNodeConfig(cfg panelapi.NodeConfig, opts xboardGenerateOptions, listen string) (map[string]any, error) {
@@ -461,19 +465,27 @@ func normalizeInboundNetworks(raw string) []string {
 	return out
 }
 
-func mergeCustomRouting(configs ...panelapi.NodeConfig) ([]any, map[string]any, error) {
+func mergeCustomRouting(configs ...panelapi.NodeConfig) ([]any, map[string]any, map[string]any, error) {
 	var outbounds []any
 	var rules []any
+	var routeOptions map[string]any
+	var dnsConfig map[string]any
 	seenTags := map[string]struct{}{
 		"direct": {},
 		"block":  {},
 	}
 
 	for _, cfg := range configs {
+		if dnsConfig == nil && len(cfg.CustomDNS) > 0 {
+			dnsConfig = cloneAnyMap(cfg.CustomDNS)
+		}
+		if routeOptions == nil && len(cfg.RouteOptions) > 0 {
+			routeOptions = cloneAnyMap(cfg.RouteOptions)
+		}
 		for _, raw := range cfg.CustomOutbounds {
 			built, tag, err := customOutboundToSingBox(raw)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			key := strings.ToLower(strings.TrimSpace(tag))
 			if _, exists := seenTags[key]; exists {
@@ -487,23 +499,41 @@ func mergeCustomRouting(configs ...panelapi.NodeConfig) ([]any, map[string]any, 
 	for _, cfg := range configs {
 		builtRules, err := buildStructuredRouteRules(cfg.CustomRouteRules, seenTags)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		rules = append(rules, builtRules...)
 		if len(cfg.CustomRoutes) > 0 {
 			for _, raw := range cfg.CustomRoutes {
+				if maybeDNS, ok := raw["dns"].(map[string]any); ok && dnsConfig == nil {
+					dnsConfig = cloneAnyMap(maybeDNS)
+					continue
+				}
+				if maybeOptions, ok := raw["route_options"].(map[string]any); ok && routeOptions == nil {
+					routeOptions = cloneAnyMap(maybeOptions)
+					continue
+				}
 				rules = append(rules, raw)
 			}
 		}
 	}
 
-	if len(rules) == 0 {
-		return outbounds, nil, nil
+	if len(rules) == 0 && len(routeOptions) == 0 {
+		return outbounds, nil, dnsConfig, nil
 	}
-	return outbounds, map[string]any{"rules": rules, "final": "direct"}, nil
+	route := cloneAnyMap(routeOptions)
+	if route == nil {
+		route = map[string]any{}
+	}
+	if len(rules) > 0 {
+		route["rules"] = rules
+	}
+	if _, ok := route["final"]; !ok {
+		route["final"] = "direct"
+	}
+	return outbounds, route, dnsConfig, nil
 }
 
-func buildCustomRouting(cfg panelapi.NodeConfig) ([]any, map[string]any, error) {
+func buildCustomRouting(cfg panelapi.NodeConfig) ([]any, map[string]any, map[string]any, error) {
 	return mergeCustomRouting(cfg)
 }
 

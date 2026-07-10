@@ -331,6 +331,7 @@ func configurePanel(
 	machineToken string,
 	machineOnly bool,
 	sourceServerMap map[string]string,
+	sourceDropLabels map[string]bool,
 ) (panelapi.Panel, panelapi.MachineReporter, error) {
 	var panel panelapi.Panel
 	var machineReporter panelapi.MachineReporter
@@ -354,6 +355,9 @@ func configurePanel(
 				}
 				panel = panelapi.SourceMappedPanel{Default: panel, Routes: routes}
 			}
+			if len(sourceDropLabels) > 0 {
+				panel = panelapi.SourceFilteredPanel{Inner: panel, DropSources: sourceDropLabels}
+			}
 		}
 		if machineID != "" {
 			machineReporter, err = buildMachineReporter(panelURL, machineID, machineToken)
@@ -368,6 +372,19 @@ func configurePanel(
 		panel = panelapi.LocalUsers{Path: usersPath}
 	}
 	return panel, nil, nil
+}
+
+func parseSourceDropLabels(spec string) map[string]bool {
+	out := map[string]bool{}
+	for _, label := range strings.FieldsFunc(spec, func(r rune) bool {
+		return r == ',' || r == ';' || r == '+'
+	}) {
+		label = strings.TrimSpace(label)
+		if label != "" {
+			out[label] = true
+		}
+	}
+	return out
 }
 
 func collectInbounds(b *box.Box) map[string]adapter.Inbound {
@@ -462,9 +479,10 @@ func main() {
 	debugRuntimeEvery := flag.Duration("debug-runtime-every", time.Second, "runtime diagnostics sampling interval")
 	sourceBuckets := flag.String("source-buckets", "", "optional source label rules separated by semicolon or plus, e.g. nbix=114.111.176.34/32+cnix=103.96.140.122/32")
 	sourceServerMapSpec := flag.String("source-server-map", "", "optional source label to XBoard node id map, e.g. cnix=51,nbix=52; requires --source-buckets")
+	sourceDropSpec := flag.String("source-drop", "", "optional source labels whose traffic/alive should not be pushed to panel, e.g. gomami-backend")
 	flag.Parse()
 
-	runtime.GOMAXPROCS(1)
+	configureGoMaxProcs()
 	os.Setenv("SING_DNS_PATH", "")
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -476,6 +494,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	sourceDropLabels := parseSourceDropLabels(*sourceDropSpec)
 
 	panel, machineReporter, err := configurePanel(
 		*panelURL,
@@ -489,6 +508,7 @@ func main() {
 		*machineToken,
 		*machineOnly,
 		sourceServerMap,
+		sourceDropLabels,
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -530,7 +550,7 @@ func main() {
 			users:            userManager,
 			sessionTracker:   NewSessionTracker(classifier),
 			sourceClassifier: classifier,
-			sourceTraffic:    len(sourceServerMap) > 0,
+			sourceTraffic:    len(sourceServerMap) > 0 || len(sourceDropLabels) > 0,
 		}
 		b.Router().AppendTracker(h)
 
@@ -583,4 +603,11 @@ func main() {
 			log.Println(err)
 		}
 	}
+}
+
+func configureGoMaxProcs() {
+	if _, ok := os.LookupEnv("GOMAXPROCS"); ok {
+		return
+	}
+	runtime.GOMAXPROCS(1)
 }

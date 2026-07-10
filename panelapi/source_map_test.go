@@ -85,6 +85,30 @@ func TestSourceMappedPanelRoutesTaggedAliveAndStripsSourceSuffix(t *testing.T) {
 	assertAliveLog(t, base.aliveLog, []map[string]map[string][]string{{"ss-in": {"7": {}}}})
 }
 
+func TestSourceFilteredPanelDropsIgnoredSourcesBeforePush(t *testing.T) {
+	base := &recordingPanel{}
+	panel := SourceFilteredPanel{
+		Inner:       base,
+		DropSources: map[string]bool{"gomami-backend": true},
+	}
+
+	if err := panel.PushTraffic(context.Background(), map[string]map[string][2]int64{
+		"ss-in@source=gomami-backend": {"7": {100, 200}},
+		"ss-in":                       {"7": {1, 2}},
+	}); err != nil {
+		t.Fatalf("PushTraffic: %v", err)
+	}
+	if err := panel.PushAlive(context.Background(), map[string]map[string][]string{
+		"ss-in@source=gomami-backend": {"7": {"151.244.134.192"}},
+		"ss-in":                       {"7": {"198.51.100.7"}},
+	}); err != nil {
+		t.Fatalf("PushAlive: %v", err)
+	}
+
+	assertTrafficLog(t, base.trafficLog, []map[string]map[string][2]int64{{"ss-in": {"7": {1, 2}}}})
+	assertAliveLog(t, base.aliveLog, []map[string]map[string][]string{{"ss-in": {"7": {"198.51.100.7"}}}})
+}
+
 func assertTrafficLog(t *testing.T, got, want []map[string]map[string][2]int64) {
 	t.Helper()
 	if !reflect.DeepEqual(got, want) {

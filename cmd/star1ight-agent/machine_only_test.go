@@ -39,6 +39,7 @@ func TestConfigurePanelMachineOnlyBuildsReporterWithoutNodeSync(t *testing.T) {
 		"machine-token",
 		true,
 		nil,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("configurePanel: %v", err)
@@ -67,6 +68,7 @@ func TestConfigurePanelBuildsNodeSyncClientWhenNodeIDPresent(t *testing.T) {
 		"",
 		"",
 		false,
+		nil,
 		nil,
 	)
 	if err != nil {
@@ -97,6 +99,7 @@ func TestConfigurePanelUsesLocalUsersWhenPanelURLMissing(t *testing.T) {
 		"",
 		false,
 		nil,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("configurePanel: %v", err)
@@ -110,5 +113,38 @@ func TestConfigurePanelUsesLocalUsersWhenPanelURLMissing(t *testing.T) {
 	}
 	if local.Path != "/tmp/local-users.json" {
 		t.Fatalf("local users path = %q", local.Path)
+	}
+}
+
+func TestConfigurePanelWrapsSourceFilteredPanelWhenDropLabelsPresent(t *testing.T) {
+	panel, reporter, err := configurePanel(
+		"https://panel.example.com",
+		"panel-token",
+		"21",
+		"shadowsocks",
+		"",
+		"hysteria",
+		"",
+		"",
+		"",
+		false,
+		nil,
+		map[string]bool{"gomami-backend": true},
+	)
+	if err != nil {
+		t.Fatalf("configurePanel: %v", err)
+	}
+	if reporter != nil {
+		t.Fatalf("reporter = %#v, want nil", reporter)
+	}
+	filtered, ok := panel.(panelapi.SourceFilteredPanel)
+	if !ok {
+		t.Fatalf("panel type = %T, want panelapi.SourceFilteredPanel", panel)
+	}
+	if !filtered.DropSources["gomami-backend"] {
+		t.Fatalf("drop sources = %#v", filtered.DropSources)
+	}
+	if _, ok := filtered.Inner.(*panelapi.Client); !ok {
+		t.Fatalf("inner panel type = %T, want *panelapi.Client", filtered.Inner)
 	}
 }

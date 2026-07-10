@@ -102,7 +102,9 @@ type NodeConfig struct {
 	Obfs             string            `json:"obfs,omitempty"`
 	ObfsPassword     string            `json:"obfs-password,omitempty"`
 	BaseConfig       BaseConfig        `json:"base_config,omitempty"`
+	CustomDNS        map[string]any    `json:"custom_dns,omitempty"`
 	CustomOutbounds  []OutboundConfig  `json:"custom_outbounds,omitempty"`
+	RouteOptions     map[string]any    `json:"route_options,omitempty"`
 	CustomRouteRules []CustomRouteRule `json:"custom_route_rules,omitempty"`
 	CustomRoutes     []map[string]any  `json:"custom_routes,omitempty"`
 }

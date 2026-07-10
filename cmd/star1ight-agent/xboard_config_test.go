@@ -163,7 +163,7 @@ func TestGenerateConfigOmitsDeprecatedDNSOutbound(t *testing.T) {
 			"listen_port": 10001,
 			"users":       []any{},
 		},
-	}, nil, nil)
+	}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("buildSingBoxConfigFromInbounds: %v", err)
 	}
@@ -180,6 +180,75 @@ func TestGenerateConfigOmitsDeprecatedDNSOutbound(t *testing.T) {
 		if outbound["type"] == "dns" || outbound["tag"] == "dns-out" {
 			t.Fatalf("deprecated dns outbound should not be generated: %#v", outbound)
 		}
+	}
+}
+
+func TestGenerateConfigIncludesCustomDNSAndRouteOptions(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"protocol":"shadowsocks",
+			"listen_ip":"0.0.0.0",
+			"server_port":3001,
+			"cipher":"2022-blake3-aes-256-gcm",
+			"server_key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=",
+			"network":"tcp,udp",
+			"custom_dns":{
+				"servers":[{"type":"local","tag":"local"}],
+				"strategy":"ipv6_only"
+			},
+			"custom_outbounds":[
+				{
+					"tag":"direct-v6",
+					"protocol":"direct",
+					"settings":{"domain_resolver":{"server":"local","strategy":"ipv6_only"}}
+				}
+			],
+			"route_options":{
+				"default_domain_resolver":{"server":"local","strategy":"ipv6_only"},
+				"final":"direct-v6"
+			}
+		}`))
+	}))
+	defer srv.Close()
+
+	out := filepath.Join(t.TempDir(), "config.json")
+	if _, err := generateXboardConfig(context.Background(), xboardGenerateOptions{
+		PanelURL:    srv.URL,
+		PanelToken:  "tok",
+		PanelNodeID: "31",
+		NodeMode:    "ss",
+		Out:         out,
+	}); err != nil {
+		t.Fatalf("generateXboardConfig: %v", err)
+	}
+
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("generated config is not json: %v\n%s", err, data)
+	}
+	dns, ok := cfg["dns"].(map[string]any)
+	if !ok {
+		t.Fatalf("dns missing: %#v", cfg["dns"])
+	}
+	if dns["strategy"] != "ipv6_only" {
+		t.Fatalf("dns.strategy = %#v, want ipv6_only", dns["strategy"])
+	}
+	route, ok := cfg["route"].(map[string]any)
+	if !ok {
+		t.Fatalf("route missing: %#v", cfg["route"])
+	}
+	if route["final"] != "direct-v6" {
+		t.Fatalf("route.final = %#v, want direct-v6", route["final"])
+	}
+	if _, ok := route["default_domain_resolver"]; !ok {
+		t.Fatalf("route.default_domain_resolver missing: %#v", route)
+	}
+	if _, err := loadOptions(out); err != nil {
+		t.Fatalf("generated config not loadable by sing-box: %v\n%s", err, data)
 	}
 }
 

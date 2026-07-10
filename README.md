@@ -18,7 +18,7 @@
 * **精简协议栈**：编译期剔除 VMess、Trojan 与默认 TUN 等非现网必需模块，保留 VLESS Reality、Hysteria 2、Shadowsocks 与 Shadowsocks 2022。
 * **单进程低开销**：VLESS Reality、Hysteria 2 与 Shadowsocks 可运行于同一个进程内，常态空载物理内存（RSS）仍保持小内存 NAT 机器可接受范围。
 * **无用依赖削减**：删除精简了无用依赖库，使用二进制编译，以最大程度压缩内存占用。
-* **自动 GC 限制**：默认设置 `GOMEMLIMIT=40MiB`、`GOGC=70`、限制 `GOMAXPROCS=1`，防止 Go 虚拟机激进申请内存 （刚好匹配Star1ight agent的参数）。
+* **部署侧 GC/CPU 限制**：安装脚本默认设置 `GOMEMLIMIT=40MiB`、`GOGC=70`、`GOMAXPROCS=1`，防止小内存 NAT 机器被 Go 虚拟机激进申请内存；二进制本身会尊重 systemd/OpenRC 中显式设置的 `GOMAXPROCS`，大带宽多核机器可按机型放宽。
 
 ---
 
@@ -95,6 +95,14 @@ agent 会根据 sing-box inbound tracker 记录当前连接的用户与来源 IP
 
 为避免失败握手、错误 flow 或扫描流量把用户误判为在线，单个连接需要累计超过 `32KiB` 真实代理读写后才会激活在线设备；流量计费仍从首字节开始统计，不受该阈值影响。
 
+二跳节点的后端落地机如果也运行 agent，应把前置机来源标记为 drop，避免前置节点和后端落地节点同时上报同一用户流量与在线设备：
+
+```bash
+-source-buckets 'backend-relay=198.51.100.42/32' -source-drop backend-relay
+```
+
+`source-drop` 只阻止对应来源的 `/UniProxy/push` 与 `/UniProxy/alive` 用户级上报，不影响 machine heartbeat、机器总流量或本地 `/stats?details=1` 诊断输出。
+
 本地监控可用：
 
 ```bash
@@ -158,7 +166,7 @@ sysctl -p
 * **硬件规格**：0.15 核 CPU (AMD EPYC 9655) / 256MB 内存
 * **系统环境**：Alpine Linux 3.21，部署 Hysteria 2 + VLESS Reality 双协议
 * **客户端网络**：安徽联通 5G 移动网络测速
-* **代理程序参数**：`GOMEMLIMIT=40MiB`, `GOGC=70`, `GOMAXPROCS=1`
+* **代理程序参数**：小内存 NAT 机器建议 `GOMEMLIMIT=40MiB`, `GOGC=70`, `GOMAXPROCS=1`；多核大带宽机器可显式提高 `GOMAXPROCS`，不要在二进制里写死。
 * **内核缓冲区设置 (限制 1.6MB)**：
   * `net.ipv4.tcp_rmem = 4096 87380 1677722`
   * `net.ipv4.tcp_wmem = 4096 16384 1677722`
@@ -178,7 +186,7 @@ sysctl -p
    * **系统 Socket 内存 (Cgroup Sock Mem)**：189 MB (198,889,472 bytes)
    * **Cgroup 内存总量**：233 MB (244,355,072 bytes)
    * **Mini-SB RSS 占用**：稳定在 **35 MB**
-   
+
    ![第一波测速结果](https://www.speedtest.net/result/a/11658313877.png)
 
 2. **第二波压测**
@@ -186,7 +194,7 @@ sysctl -p
    * **系统 Socket 内存**：199 MB (209,104,896 bytes)
    * **Cgroup 内存总量**：243 MB (255,594,496 bytes)
    * **Mini-SB RSS 占用**：稳定在 **36 MB**
-   
+
    ![第二波测速结果](https://www.speedtest.net/result/a/11658328624.png)
 
 3. **第三波压测**
@@ -194,7 +202,7 @@ sysctl -p
    * **系统 Socket 内存**：196 MB
    * **Cgroup 内存总量**：240 MB
    * **Mini-SB RSS 占用**：稳定在 **37 MB**
-   
+
    ![第三波测速结果](https://www.speedtest.net/result/a/11658331342.png)
 
 ### 流媒体测试 (YouTube 4K，采用 VLESS 协议)

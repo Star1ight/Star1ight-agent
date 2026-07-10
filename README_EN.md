@@ -17,7 +17,7 @@ Running traditional node clients (e.g., V2bX) on NAT servers with only 128MB or 
 * **Minimalist Protocol Stack**: VMess, Trojan, default TUN, and other unused modules are stripped out at compile time, retaining VLESS Reality, Hysteria 2, Shadowsocks, and Shadowsocks 2022 for the current production footprint.
 * **Single-Process Lightweight Setup**: VLESS Reality, Hysteria 2, and Shadowsocks can run within a single process while keeping idle RSS suitable for low-memory NAT machines.
 * **Unused Dependency Pruning**: Bloated dependencies are pruned, and the binary is compiled specifically to maximize RAM conservation.
-* **Aggressive Go GC Tuning**: Defaults to `GOMEMLIMIT=40MiB`, `GOGC=70`, and restricts `GOMAXPROCS=1` to prevent the Go runtime from aggressively requesting virtual memory.
+* **Deployment-side Go Runtime Tuning**: The installer defaults to `GOMEMLIMIT=40MiB`, `GOGC=70`, and `GOMAXPROCS=1` to protect tiny NAT nodes. The binary respects an explicit `GOMAXPROCS` from systemd/OpenRC, so high-bandwidth multi-core machines can opt in to more CPU parallelism.
 
 ---
 
@@ -158,7 +158,7 @@ sysctl -p
 * **Specs**: 0.15 vCPU (AMD EPYC 9655) / 256MB RAM
 * **OS**: Alpine Linux 3.21, running both Hysteria 2 + VLESS Reality
 * **Client Network**: China Unicom 5G Mobile Network
-* **Agent Settings**: `GOMEMLIMIT=40MiB`, `GOGC=70`, `GOMAXPROCS=1`
+* **Agent Settings**: Tiny NAT nodes should use `GOMEMLIMIT=40MiB`, `GOGC=70`, `GOMAXPROCS=1`; multi-core high-bandwidth nodes may explicitly raise `GOMAXPROCS` at deployment time.
 * **Sysctl TCP Buffer Configuration (1.6MB Limit)**:
   * `net.ipv4.tcp_rmem = 4096 87380 1677722`
   * `net.ipv4.tcp_wmem = 4096 16384 1677722`
@@ -178,7 +178,7 @@ sysctl -p
    * **System Socket Memory (Cgroup Sock Mem)**: 189 MB (198,889,472 bytes)
    * **Total Cgroup Memory**: 233 MB (244,355,072 bytes)
    * **Star1ight agent RSS**: Stable at **35 MB**
-   
+
    ![Test Run 1 Speedtest Results](https://www.speedtest.net/result/a/11658313877.png)
 
 2. **Test Run #2**
@@ -186,7 +186,7 @@ sysctl -p
    * **System Socket Memory (Cgroup Sock Mem)**: 199 MB (209,104,896 bytes)
    * **Total Cgroup Memory**: 243 MB (255,594,496 bytes)
    * **Star1ight agent RSS**: Stable at **36 MB**
-   
+
    ![Test Run 2 Speedtest Results](https://www.speedtest.net/result/a/11658328624.png)
 
 3. **Test Run #3**
@@ -194,7 +194,7 @@ sysctl -p
    * **System Socket Memory (Cgroup Sock Mem)**: 196 MB
    * **Total Cgroup Memory**: 240 MB
    * **Star1ight agent RSS**: Stable at **37 MB**
-   
+
    ![Test Run 3 Speedtest Results](https://www.speedtest.net/result/a/11658331342.png)
 
 ### Streaming Playback Performance (YouTube 4K via VLESS)
